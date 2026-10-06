@@ -82,6 +82,7 @@ Optional additions (implemented): `scale.feature` `{ "name", "real_mm", "count_a
 - Agent provider: Gemini (`gemini-flash-latest` by default, configurable in the panel). Chosen over Claude/Qwen for cost: Flash is cheap, multimodal, and search + page fetching are built into the API, so no separate search API is needed.
 - API key entered in the panel's Settings tab (stored in Rhino plug-in settings); `GEMINI_API_KEY` / `GOOGLE_API_KEY` env var only as a fallback when nothing is saved. Never commit keys.
 - WebP is converted at download time with SixLabors.ImageSharp 2.1.x (Apache-2.0; 3.x dropped .NET Framework and changed licence). Lossy → JPEG, lossless/alpha → PNG.
+- Enscape (experimental, not yet tested in Rhino): optional conversion to Enscape's material type via `Rhino.Render.Utilities.ChangeContentType(rm, enscapeTypeId, harvestParameters: true)`. The type ID isn't published; `EnscapeSupport` detects it from `RenderContentType.GetAllAvailableTypes()` (internal name contains "enscape" and instantiates as a RenderMaterial), with a manual override in Settings. Falls back to the PBR material on failure.
 - Units: tile sizes in mm, converted to model units.
 - Don't write RhinoCommon or Eto API calls from memory without checking them; build and test in Rhino as you go.
 - License: MIT.

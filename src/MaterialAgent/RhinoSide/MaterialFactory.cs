@@ -17,6 +17,9 @@ namespace MaterialAgent.RhinoSide
         public int MappedCount { get; set; }
         public bool MapsGenerated { get; set; }
         public string MapError { get; set; }
+        public bool IsEnscape { get; set; }
+        /// <summary>Set when Enscape conversion was asked for but didn't happen.</summary>
+        public string EnscapeWarning { get; set; }
     }
 
     /// <summary>Creates (or reuses) the material and applies it to objects. Call on the UI thread.</summary>
@@ -41,6 +44,16 @@ namespace MaterialAgent.RhinoSide
             try
             {
                 result.Material = reuse ?? CreateRenderMaterial(doc, settings, maps);
+
+                // Convert before assigning, so objects get the final material.
+                if (reuse == null && settings.AsEnscape)
+                {
+                    var (converted, warning) = EnscapeSupport.Convert(doc, result.Material);
+                    result.Material = converted;
+                    result.EnscapeWarning = warning;
+                }
+                var enscapeType = settings.AsEnscape ? EnscapeSupport.MaterialType : null;
+                result.IsEnscape = enscapeType != null && result.Material.TypeId == enscapeType.Id;
 
                 foreach (var obj in targets)
                 {

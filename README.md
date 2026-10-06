@@ -11,6 +11,8 @@ Rhino 8 plugin that turns a real product name into an applied, correctly scaled 
 
 You can skip the agent with **Use your own image** (URL or file).
 
+**Enscape (experimental, unverified):** tick **Create as Enscape material** to convert the new material to Enscape's material type (Rhino's "Change Type, copy similar settings"), so it shows in the Enscape Material Editor. The checkbox is disabled when Enscape isn't detected; if conversion fails you get a standard Rhino material and a warning. If detection fails, Settings → Enscape → **List material types** prints every material type ID to the command line; paste Enscape's ID there.
+
 WebP images (what most product sites serve) are converted automatically when downloaded: lossy WebP to JPEG, lossless or transparent WebP to PNG. Provenance keeps the original WebP URL. AVIF is not supported yet.
 
 ## Cost
@@ -35,6 +37,7 @@ The plug-in is `src/MaterialAgent/bin/Release/net7.0/MaterialAgent.rhp` (Rhino 8
 Everything compiles against RhinoCommon 8 and the Rhino-free parts are unit tested, but nothing has been run inside Rhino yet. Check:
 - Texture bitmaps get embedded in the .3dm on save. Downloaded images and generated maps live in `%LOCALAPPDATA%\MaterialAgent\textures` only because Rhino textures reference files on disk.
 - The derived normal map in the PBR bump slot is detected as a normal map (not treated as a height map).
+- Enscape conversion: whether detection finds Enscape's type, which settings carry over (texture, roughness, normal map), and whether Enscape keeps the real-world texture mapping without its own extra scaling.
 - The API key is stored in plain text in Rhino's plug-in settings file, like other Rhino settings.
 - Material-table user strings survive Rhino's render-material sync (reuse also reads the Notes copy).
 - Box mapping on non-square repeats: on one pair of side faces the repeat is height × height. Prefer planar for panels.

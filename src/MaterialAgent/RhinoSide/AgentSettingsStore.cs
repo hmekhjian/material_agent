@@ -10,11 +10,37 @@ namespace MaterialAgent.RhinoSide
     {
         const string KeyApiKey = "GeminiApiKey";
         const string KeyModel = "GeminiModel";
+        const string KeyEnscape = "CreateEnscapeMaterial";
+        const string KeyEnscapeTypeId = "EnscapeMaterialTypeId";
 
         static Rhino.PersistentSettings Settings => MaterialAgentPlugin.Instance?.Settings;
 
         public static string SavedApiKey => Settings?.GetString(KeyApiKey, "") ?? "";
         public static string SavedModel => Settings?.GetString(KeyModel, AgentSettings.DefaultModel) ?? AgentSettings.DefaultModel;
+
+        public static bool CreateEnscape
+        {
+            get => Settings?.GetBool(KeyEnscape, false) ?? false;
+            set { var s = Settings; if (s == null) return; s.SetBool(KeyEnscape, value); MaterialAgentPlugin.Instance.SaveSettings(); }
+        }
+
+        /// <summary>Manual Enscape material type ID, for when detection fails. Empty = detect.</summary>
+        public static string EnscapeTypeId
+        {
+            get => Settings?.GetString(KeyEnscapeTypeId, "") ?? "";
+            set
+            {
+                var s = Settings; if (s == null) return;
+                s.SetString(KeyEnscapeTypeId, value?.Trim() ?? "");
+                MaterialAgentPlugin.Instance.SaveSettings();
+                ApplyEnscapeOverride();
+            }
+        }
+
+        public static void ApplyEnscapeOverride()
+        {
+            EnscapeSupport.OverrideTypeId = System.Guid.TryParse(EnscapeTypeId, out var g) ? g : System.Guid.Empty;
+        }
 
         public static AgentSettings Load() => new AgentSettings
         {

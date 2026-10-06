@@ -80,6 +80,8 @@ namespace MaterialAgent.UI
         readonly DropDown _grainDrop = new DropDown();
         readonly CheckBox _rotateCheck = new CheckBox { Text = "Rotate 90°" };
         readonly DropDown _finishDrop = new DropDown();
+        readonly CheckBox _enscapeCheck = new CheckBox { Text = "Create as Enscape material", ToolTip = "Converts the material to Enscape's type so it shows in the Enscape Material Editor." };
+        readonly Label _enscapeNote = new Label { TextColor = Colors.Gray, Wrap = WrapMode.Word };
         readonly CheckBox _mapsCheck = new CheckBox { Text = "Generate normal + roughness maps", Checked = true, ToolTip = "Approximated from the image; product pages rarely provide real PBR maps." };
 
         // Import + adjust
@@ -105,6 +107,10 @@ namespace MaterialAgent.UI
         readonly Button _clearKeyButton = new Button { Text = "Remove key" };
         readonly Label _keySourceLabel = new Label { TextColor = Colors.Gray, Wrap = WrapMode.Word };
         readonly Label _settingsStatus = new Label { Wrap = WrapMode.Word };
+        readonly Label _enscapeStatus = new Label { Wrap = WrapMode.Word };
+        readonly TextBox _enscapeTypeBox = new TextBox { PlaceholderText = "Auto-detect (leave empty)" };
+        readonly Button _enscapeDetectButton = new Button { Text = "Detect again" };
+        readonly Button _enscapeListButton = new Button { Text = "List material types", ToolTip = "Prints every material type and its ID to the Rhino command line." };
         readonly Expander _manualExpander = new Expander { Header = new Label { Text = "Use your own image" } };
 
         public MaterialAgentPanel(uint documentSerialNumber)
@@ -149,6 +155,13 @@ namespace MaterialAgent.UI
             _testKeyButton.Click += async (s, e) => await TestKeyAsync();
             _clearKeyButton.Click += (s, e) => ClearKey();
             _showKeyCheck.CheckedChanged += (s, e) => ToggleShowKey();
+            _enscapeCheck.CheckedChanged += (s, e) => { if (_enscapeCheck.Enabled) AgentSettingsStore.CreateEnscape = _enscapeCheck.Checked == true; };
+            _enscapeDetectButton.Click += (s, e) => { AgentSettingsStore.EnscapeTypeId = _enscapeTypeBox.Text; EnscapeSupport.Redetect(); UpdateEnscapeUi(); };
+            _enscapeListButton.Click += (s, e) =>
+            {
+                int n = EnscapeSupport.ListMaterialTypes();
+                _enscapeStatus.Text = $"Listed {n} material type(s) on the Rhino command line. Copy Enscape's ID into the box above and press Detect again.";
+            };
             _apiKeyBox.TextChanged += (s, e) => { if (!_apiKeyPlain.Visible) _apiKeyPlain.Text = _apiKeyBox.Text; };
             _apiKeyPlain.TextChanged += (s, e) => { if (_apiKeyPlain.Visible) _apiKeyBox.Text = _apiKeyPlain.Text; };
             _liveTimer.Elapsed += (s, e) => { _liveTimer.Stop(); Remap(quiet: true); };
@@ -160,6 +173,7 @@ namespace MaterialAgent.UI
             _tabs.Pages.Add(_settingsPage);
             Content = _tabs;
             LoadSettingsIntoUi();
+            UpdateEnscapeUi();
             UpdateScaleSourceLabel();
         }
 
@@ -217,6 +231,8 @@ namespace MaterialAgent.UI
                     new TableRow(null, _rotateCheck),
                     new TableRow(Caption("Finish"), new TableCell(_finishDrop, true)),
                     new TableRow(null, _mapsCheck),
+                    new TableRow(null, _enscapeCheck),
+                    new TableRow(null, _enscapeNote),
                 },
             });
 
@@ -273,6 +289,11 @@ namespace MaterialAgent.UI
             layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_saveSettingsButton, _testKeyButton, _clearKeyButton, null) } });
             layout.AddRow(_settingsStatus);
             layout.AddRow(_keySourceLabel);
+
+            layout.AddRow(Header("Enscape"));
+            layout.AddRow(_enscapeStatus);
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 4), Rows = { new TableRow(Caption("Material type ID"), new TableCell(_enscapeTypeBox, true)) } });
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_enscapeDetectButton, _enscapeListButton, null) } });
             layout.Add(null);
             return layout;
         }
@@ -677,6 +698,7 @@ namespace MaterialAgent.UI
                 Mapping = mapping,
                 Finish = CurrentFinish(),
                 GenerateMaps = _mapsCheck.Checked == true,
+                AsEnscape = _enscapeCheck.Enabled && _enscapeCheck.Checked == true,
                 Provenance = _image == null ? null : BuildProvenance(mapping),
             };
 
@@ -692,6 +714,8 @@ namespace MaterialAgent.UI
                     ? $"{verb} material '{result.Material.Name}'. No surfaces, meshes or SubDs were selected, so nothing was assigned."
                     : $"{verb} material '{result.Material.Name}' and applied it to {result.AssignedCount} object(s) at {mapping.WidthMm:0.#} × {mapping.HeightMm:0.#} mm.";
                 if (result.MapError != null) msg += "\nMaps were not generated: " + result.MapError;
+                if (result.IsEnscape) msg += "\nCreated as an Enscape material: open the Enscape Material Editor to fine-tune it.";
+                if (result.EnscapeWarning != null) msg += "\n" + result.EnscapeWarning;
                 SetStatus(msg);
                 RefreshExisting();
             }
@@ -853,6 +877,21 @@ namespace MaterialAgent.UI
             {
                 OnUi(() => _testKeyButton.Enabled = true);
             }
+        }
+
+        void UpdateEnscapeUi()
+        {
+            AgentSettingsStore.ApplyEnscapeOverride();
+            _enscapeTypeBox.Text = AgentSettingsStore.EnscapeTypeId;
+            var type = EnscapeSupport.MaterialType;
+            _enscapeCheck.Enabled = type != null;
+            _enscapeCheck.Checked = type != null && AgentSettingsStore.CreateEnscape;
+            _enscapeNote.Text = type == null ? "Enscape not detected (install or load Enscape, then Settings → Detect again)." : "";
+            _enscapeNote.Visible = type == null;
+            _enscapeStatus.Text = type == null
+                ? "Enscape material type not found. If Enscape is installed, start it once, then press Detect again. If that fails, press List material types and paste Enscape's ID above."
+                : $"Enscape material type: {type.InternalName} ({type.Id}).";
+            _enscapeStatus.TextColor = type == null ? Colors.DarkOrange : Colors.Green;
         }
 
         void SetSettingsStatus(string text, bool error = false)
