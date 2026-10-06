@@ -47,7 +47,7 @@ namespace MaterialAgent.RhinoSide
         }
 
         /// <summary>The mapping settings last used for a material, from its provenance.</summary>
-        public static MappingSettings MappingFrom(Provenance p) => p == null || p.WidthMm <= 0 || p.HeightMm <= 0 ? null : new MappingSettings
+        public static MappingSettings MappingFrom(Provenance p) => p == null || p.IsSolidColor || p.WidthMm <= 0 || p.HeightMm <= 0 ? null : new MappingSettings
         {
             WidthMm = p.WidthMm,
             HeightMm = p.HeightMm,

@@ -1,4 +1,5 @@
 using MaterialAgent.Core;
+using MaterialAgent.Core.Colors;
 
 namespace MaterialAgent.RhinoSide
 {
@@ -7,6 +8,8 @@ namespace MaterialAgent.RhinoSide
     {
         public string MaterialName { get; set; }
         public FetchedImage Image { get; set; }
+        /// <summary>Plain-colour material (RAL). When set, no texture, maps or mapping are used.</summary>
+        public RalColor SolidColor { get; set; }
         public Provenance Provenance { get; set; }
         public MappingSettings Mapping { get; set; }
         public Finish Finish { get; set; } = Finish.Matt;

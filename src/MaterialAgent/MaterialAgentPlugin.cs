@@ -1,3 +1,4 @@
+using MaterialAgent.RhinoSide;
 using MaterialAgent.UI;
 using Rhino.PlugIns;
 
@@ -24,6 +25,7 @@ namespace MaterialAgent
                 typeof(MaterialAgentPlugin).Assembly,
                 "MaterialAgent.Resources.MaterialAgent.ico",
                 Rhino.UI.PanelType.PerDoc);
+            LayerAutoMapper.Enable();
             return LoadReturnCode.Success;
         }
     }

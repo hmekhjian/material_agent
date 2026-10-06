@@ -9,6 +9,7 @@ using Eto.Drawing;
 using Eto.Forms;
 using MaterialAgent.Core;
 using MaterialAgent.Core.Agent;
+using MaterialAgent.Core.Colors;
 using MaterialAgent.RhinoSide;
 using Rhino;
 using Rhino.DocObjects;
@@ -93,6 +94,12 @@ namespace MaterialAgent.UI
         // Import + adjust
         readonly CheckBox _reuseCheck = new CheckBox { Checked = true, Visible = false };
         readonly Button _importButton = new Button { Text = "Import to selection", Enabled = false };
+        readonly Button _importLayerButton = new Button { Text = "Import to layer…", Enabled = false, ToolTip = "Sets the material on chosen layers, so objects drawn there later get it too (with real-world mapping)." };
+
+        // RAL colours (built in)
+        RalColor _ralColor;
+        readonly DropDown _ralAlternatives = new DropDown { Visible = false, ToolTip = "Other colours matching your search" };
+        Control _scaleSection, _mappingSection;
         readonly CheckBox _liveCheck = new CheckBox { Text = "Live: update selected objects while editing scale/mapping" };
         readonly Button _remapButton = new Button { Text = "Re-apply to selection", ToolTip = "Update the texture mapping of the selected objects without creating a new material." };
         readonly Button _measureButton = new Button { Text = "Measure in viewport…", ToolTip = "Pick two points on a feature of known size and type its real length (MatAgentRescale)." };
@@ -157,7 +164,13 @@ namespace MaterialAgent.UI
             _grainDrop.SelectedIndexChanged += (s, e) => QueueLive();
             _rotateCheck.CheckedChanged += (s, e) => QueueLive();
             _reuseCheck.CheckedChanged += (s, e) => UpdateButtons();
-            _importButton.Click += (s, e) => Import();
+            _importButton.Click += (s, e) => Import(toLayers: false);
+            _importLayerButton.Click += (s, e) => Import(toLayers: true);
+            _ralAlternatives.SelectedIndexChanged += (s, e) =>
+            {
+                if (_ralAlternatives.SelectedIndex > 0 && _ralAlternatives.SelectedValue is ListItem li && li.Tag is RalColor c)
+                    ShowRal(new RalMatch { Color = c }, keepAlternatives: true);
+            };
             _remapButton.Click += (s, e) => Remap(quiet: false);
             _measureButton.Click += (s, e) => RhinoApp.RunScript("_MatAgentRescale", false);
             _saveSettingsButton.Click += (s, e) => SaveSettings();
@@ -205,6 +218,7 @@ namespace MaterialAgent.UI
             layout.AddRow(_preview);
             layout.AddRow(_candidateScroll);
             layout.AddRow(_imageInfo);
+            layout.AddRow(_ralAlternatives);
             layout.AddRow(_tileHint);
             layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_tiledCheck, null, _blendButton, _generateButton) } });
 
@@ -222,22 +236,32 @@ namespace MaterialAgent.UI
             layout.AddRow(_manufacturerBox);
             layout.AddRow(_pageUrlBox);
 
-            layout.AddRow(Header("Real-world repeat size"));
-            layout.AddRow(new TableLayout
+            // Scale and mapping only apply to textures; they are disabled for plain colours (RAL).
+            _scaleSection = new StackLayout
             {
-                Spacing = new Size(6, 4),
-                Rows =
+                Spacing = 6,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Items =
                 {
-                    new TableRow(Caption("Width (mm)"), new TableCell(_widthMm, true), null),
-                    new TableRow(Caption("Height (mm)"), new TableCell(_heightMm, true), _swapButton),
-                    new TableRow(null, _lockAspect, null),
+                    Header("Real-world repeat size"),
+                    new TableLayout
+                    {
+                        Spacing = new Size(6, 4),
+                        Rows =
+                        {
+                            new TableRow(Caption("Width (mm)"), new TableCell(_widthMm, true), null),
+                            new TableRow(Caption("Height (mm)"), new TableCell(_heightMm, true), _swapButton),
+                            new TableRow(null, _lockAspect, null),
+                        },
+                    },
+                    _scaleSourceLabel,
+                    _rationaleLabel,
                 },
-            });
-            layout.AddRow(_scaleSourceLabel);
-            layout.AddRow(_rationaleLabel);
+            };
+            layout.AddRow(_scaleSection);
 
             layout.AddRow(Header("Mapping and surface"));
-            layout.AddRow(new TableLayout
+            _mappingSection = new TableLayout
             {
                 Spacing = new Size(6, 4),
                 Rows =
@@ -245,15 +269,23 @@ namespace MaterialAgent.UI
                     new TableRow(Caption("Type"), new TableCell(_mappingDrop, true)),
                     new TableRow(Caption("Grain"), new TableCell(_grainDrop, true)),
                     new TableRow(null, _rotateCheck),
-                    new TableRow(Caption("Finish"), new TableCell(_finishDrop, true)),
                     new TableRow(null, _mapsCheck),
+                },
+            };
+            layout.AddRow(_mappingSection);
+            layout.AddRow(new TableLayout
+            {
+                Spacing = new Size(6, 4),
+                Rows =
+                {
+                    new TableRow(Caption("Finish"), new TableCell(_finishDrop, true)),
                     new TableRow(null, _enscapeCheck),
                     new TableRow(null, _enscapeNote),
                 },
             });
 
             layout.AddRow(_reuseCheck);
-            layout.AddRow(_importButton);
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(new TableCell(_importButton, true), new TableCell(_importLayerButton, true)) } });
             layout.AddRow(_status);
 
             layout.AddRow(Header("Adjust after import"));
@@ -344,6 +376,20 @@ namespace MaterialAgent.UI
             var query = _specBox.Text?.Trim();
             if (string.IsNullOrEmpty(query)) { SetStatus("Type a product name or code.", true); return; }
 
+            // RAL colours are built in: no web search, no API key, no cost.
+            if (RalCatalog.TryMatch(query, out var ral))
+            {
+                var inDoc = MaterialReuse.Find(Doc, ral.Color.Code, null);
+                if (inDoc != null && MessageBox.Show(this, $"'{inDoc.Material.Name}' is already in this document.\n\nUse it instead of creating another?",
+                        "Material Agent", MessageBoxButtons.YesNo, MessageBoxType.Question) == DialogResult.Yes)
+                {
+                    ShowExisting(inDoc);
+                    return;
+                }
+                ShowRal(ral, keepAlternatives: false);
+                return;
+            }
+
             // Reuse before fetching: the document may already have this product.
             var existing = MaterialReuse.FindByQuery(Doc, query);
             if (existing != null)
@@ -386,6 +432,7 @@ namespace MaterialAgent.UI
 
         void ShowResult(ResolveResult r)
         {
+            LeaveRalMode();
             _result = r;
             var p = r.Resolution.Product;
             _nameBox.Text = p.Name ?? "";
@@ -484,6 +531,7 @@ namespace MaterialAgent.UI
         void SelectCandidate(int index)
         {
             if (index < 0 || index >= _candidates.Count) return;
+            LeaveRalMode();
             _selected = index;
             var c = _candidates[index];
             _image = c.Image;
@@ -530,6 +578,73 @@ namespace MaterialAgent.UI
             if (image?.Bytes == null) return null;
             try { using (var ms = new MemoryStream(image.Bytes)) return new Bitmap(ms); }
             catch { return null; }
+        }
+
+        // ================================================================ RAL colours
+
+        void ShowRal(RalMatch match, bool keepAlternatives)
+        {
+            var c = match.Color;
+            _ralColor = c;
+            _result = null;
+            _image = null;
+            _candidates.Clear();
+            _candidateStrip.Items.Clear();
+            _candidateScroll.Visible = false;
+            _selected = -1;
+            _tileHint.Visible = false;
+
+            _preview.Image = Swatch(c);
+            var system = c.System == RalSystem.Classic ? "RAL Classic" : "RAL Design System";
+            var info = $"{c.Code} {c.Name} · {c.Hex} · built-in {system} colour (screen approximation; check against a physical RAL fan for colour-critical work)";
+            if (c.Special == RalSpecial.Metallic) info += " · pearl/metallic: rendered with some metalness";
+            if (c.Special == RalSpecial.Luminous) info += " · fluorescent: real samples are brighter than any screen can show";
+            _imageInfo.Text = info;
+            _imageInfo.TextColor = c.Special == RalSpecial.Luminous ? Colors.DarkOrange : SystemColors.ControlText;
+
+            _nameBox.Text = c.Name;
+            _codeBox.Text = c.Code;
+            _manufacturerBox.Text = "RAL";
+            _pageUrlBox.Text = "";
+            ShowProductHeader(c.Name, "RAL", c.Code, system + " colour");
+            _finishDrop.SelectedKey = c.System == RalSystem.Classic ? nameof(Finish.Satin) : nameof(Finish.Matt);
+            _scaleSection.Enabled = false;
+            _mappingSection.Enabled = false;
+
+            if (!keepAlternatives)
+            {
+                _ralAlternatives.Items.Clear();
+                if (match.Alternatives.Count > 0)
+                {
+                    _ralAlternatives.Items.Add(new ListItem { Text = $"Other matches ({match.Alternatives.Count})…" });
+                    _ralAlternatives.Items.Add(new ListItem { Text = c.Display, Tag = c });
+                    foreach (var alt in match.Alternatives)
+                        _ralAlternatives.Items.Add(new ListItem { Text = alt.Display, Tag = alt });
+                    _ralAlternatives.SelectedIndex = 0;
+                }
+                _ralAlternatives.Visible = match.Alternatives.Count > 0;
+            }
+
+            RefreshExisting();
+            UpdateButtons();
+            _progressLabel.Text = "";
+            SetStatus($"{c.Display}: choose the finish, then Import to selection or to a layer. No web search needed.");
+        }
+
+        void LeaveRalMode()
+        {
+            if (_ralColor == null) return;
+            _ralColor = null;
+            _ralAlternatives.Visible = false;
+            _scaleSection.Enabled = true;
+            _mappingSection.Enabled = true;
+        }
+
+        static Bitmap Swatch(RalColor c)
+        {
+            var color = Color.FromArgb(c.R, c.G, c.B);
+            const int w = 320, h = 200;
+            return new Bitmap(w, h, PixelFormat.Format32bppRgb, Enumerable.Repeat(color, w * h));
         }
 
         // ================================================================ seamless tools
@@ -813,7 +928,9 @@ namespace MaterialAgent.UI
         {
             bool busy = _cts != null;
             bool reuse = _existing != null && _reuseCheck.Checked == true;
-            _importButton.Enabled = !busy && (_image != null || reuse);
+            bool ready = !busy && (_image != null || _ralColor != null || reuse);
+            _importButton.Enabled = ready;
+            _importLayerButton.Enabled = ready;
         }
 
         static List<RhinoObject> SelectedTargets(RhinoDoc doc)
@@ -824,38 +941,61 @@ namespace MaterialAgent.UI
                 .ToList();
         }
 
-        void Import()
+        void Import(bool toLayers)
         {
             var doc = Doc;
             if (doc == null) { SetStatus("No active document.", true); return; }
 
             RefreshExisting();
             bool reuse = _existing != null && _reuseCheck.Checked == true;
-            if (_image == null && !reuse) { SetStatus("Find a product or load an image first.", true); return; }
+            var ral = _image == null ? _ralColor : null;
+            if (_image == null && ral == null && !reuse) { SetStatus("Find a product or colour, or load an image first.", true); return; }
+
+            int[] layers = null;
+            if (toLayers)
+            {
+                if (!Rhino.UI.Dialogs.ShowSelectMultipleLayersDialog(new[] { doc.Layers.CurrentLayerIndex }, "Apply material to layers", false, out layers)
+                    || layers == null || layers.Length == 0)
+                    return;
+            }
 
             var mapping = CurrentMapping();
             var settings = new ImportSettings
             {
                 MaterialName = MaterialName(),
                 Image = _image,
+                SolidColor = ral,
                 Mapping = mapping,
                 Finish = CurrentFinish(),
                 GenerateMaps = _mapsCheck.Checked == true,
                 AsEnscape = _enscapeCheck.Enabled && _enscapeCheck.Checked == true,
-                Provenance = _image == null ? null : BuildProvenance(mapping),
+                Provenance = _image != null || ral != null ? BuildProvenance(mapping, ral) : null,
             };
 
             try
             {
-                var targets = SelectedTargets(doc);
-                var result = MaterialFactory.Import(doc, settings, targets, reuse ? _existing.Material : null);
+                var targets = toLayers ? new List<RhinoObject>() : SelectedTargets(doc);
+                var result = MaterialFactory.Import(doc, settings, targets, reuse ? _existing.Material : null, layers);
                 MaterialAgentEvents.LastMapping = mapping;
                 if (result.Reused) UpdateProvenanceOf(doc, new[] { result.Material }, mapping);
 
                 var verb = result.Reused ? "Reused" : "Created";
-                var msg = targets.Count == 0
-                    ? $"{verb} material '{result.Material.Name}'. No surfaces, meshes or SubDs were selected, so nothing was assigned."
-                    : $"{verb} material '{result.Material.Name}' and applied it to {result.AssignedCount} object(s) at {mapping.WidthMm:0.#} × {mapping.HeightMm:0.#} mm.";
+                bool solid = ral != null || ProvenanceStore.Read(doc, result.Material)?.IsSolidColor == true;
+                var scaleText = solid ? "" : $" at {mapping.WidthMm:0.#} × {mapping.HeightMm:0.#} mm";
+                string msg;
+                if (toLayers)
+                {
+                    msg = $"{verb} material '{result.Material.Name}' and set it on {result.LayerCount} layer(s); {result.AssignedCount} object(s) on them now use it{scaleText}.";
+                    if (result.KeptOwnMaterialCount > 0)
+                        msg += $" {result.KeptOwnMaterialCount} object(s) keep their own material (set their material to 'Use layer' to change that).";
+                    if (!solid) msg += " Objects added to these layers later get the same real-world mapping.";
+                }
+                else
+                {
+                    msg = targets.Count == 0
+                        ? $"{verb} material '{result.Material.Name}'. No surfaces, meshes or SubDs were selected, so nothing was assigned."
+                        : $"{verb} material '{result.Material.Name}' and applied it to {result.AssignedCount} object(s){scaleText}.";
+                }
                 if (result.MapError != null) msg += "\nMaps were not generated: " + result.MapError;
                 if (result.IsEnscape) msg += "\nCreated as an Enscape material: open the Enscape Material Editor to fine-tune it.";
                 if (result.EnscapeWarning != null) msg += "\n" + result.EnscapeWarning;
@@ -868,23 +1008,24 @@ namespace MaterialAgent.UI
             }
         }
 
-        Provenance BuildProvenance(MappingSettings mapping) => new Provenance
+        Provenance BuildProvenance(MappingSettings mapping, RalColor ral) => new Provenance
         {
             ProductCode = NullIfBlank(_codeBox.Text),
             ProductName = NullIfBlank(_nameBox.Text),
             Manufacturer = NullIfBlank(_manufacturerBox.Text),
             PageUrl = NullIfBlank(_pageUrlBox.Text),
-            ImageUrl = _image.Source,
-            FetchDateUtc = _image.FetchedUtc,
-            ScaleSource = _scaleSource,
-            ScaleConfidence = _scaleConfidence,
-            WidthMm = mapping.WidthMm,
-            HeightMm = mapping.HeightMm,
+            ImageUrl = _image?.Source,
+            FetchDateUtc = _image?.FetchedUtc ?? DateTime.UtcNow,
+            ColorHex = ral?.Hex,
+            ScaleSource = ral != null ? ScaleSource.User : _scaleSource,
+            ScaleConfidence = ral != null ? ScaleConfidence.High : _scaleConfidence,
+            WidthMm = ral != null ? 0 : mapping.WidthMm,
+            HeightMm = ral != null ? 0 : mapping.HeightMm,
             Mapping = mapping.Kind,
             Grain = mapping.Grain,
             Rotate90 = mapping.Rotate90,
             Finish = CurrentFinish(),
-            Category = _result?.Category,
+            Category = ral != null ? (ral.System == RalSystem.Classic ? "RAL Classic colour" : "RAL Design colour") : _result?.Category,
         };
 
         void QueueLive()
@@ -927,7 +1068,7 @@ namespace MaterialAgent.UI
             foreach (var rm in materials.Where(m => m != null).GroupBy(m => m.Id).Select(g => g.First()))
             {
                 var p = ProvenanceStore.Read(doc, rm);
-                if (p == null) continue;
+                if (p == null || p.IsSolidColor) continue;
                 p.WidthMm = mapping.WidthMm;
                 p.HeightMm = mapping.HeightMm;
                 p.Mapping = mapping.Kind;

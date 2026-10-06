@@ -28,6 +28,7 @@ namespace MaterialAgent.Core
         public const string KeyGrain = Prefix + "grain_axis";
         public const string KeyFinish = Prefix + "finish";
         public const string KeyRotate90 = Prefix + "rotate90";
+        public const string KeyColor = Prefix + "color";
         public const string KeyCategory = Prefix + "category";
 
         const string NotesHeader = "[Material Agent provenance]";
@@ -47,6 +48,9 @@ namespace MaterialAgent.Core
         public GrainAxis Grain { get; set; } = GrainAxis.None;
         public Finish Finish { get; set; } = Finish.Matt;
         public bool Rotate90 { get; set; }
+        /// <summary>"#RRGGBB" for plain-colour materials (RAL etc.); null for textured ones.</summary>
+        public string ColorHex { get; set; }
+        public bool IsSolidColor => !string.IsNullOrEmpty(ColorHex);
         public string Category { get; set; }
 
         public IEnumerable<KeyValuePair<string, string>> ToPairs()
@@ -66,6 +70,7 @@ namespace MaterialAgent.Core
             yield return Pair(KeyGrain, EnumText.ToWire(Grain));
             yield return Pair(KeyFinish, EnumText.ToWire(Finish));
             yield return Pair(KeyRotate90, Rotate90 ? "true" : "false");
+            yield return Pair(KeyColor, ColorHex);
             yield return Pair(KeyCategory, Category);
         }
 
@@ -99,6 +104,7 @@ namespace MaterialAgent.Core
             if (EnumText.TryParseGrain(get(KeyGrain), out var g)) p.Grain = g;
             if (EnumText.TryParseFinish(get(KeyFinish), out var f)) p.Finish = f;
             p.Rotate90 = string.Equals(get(KeyRotate90), "true", StringComparison.OrdinalIgnoreCase);
+            p.ColorHex = NullIfEmpty(get(KeyColor));
             p.Category = NullIfEmpty(get(KeyCategory));
             return p;
         }
