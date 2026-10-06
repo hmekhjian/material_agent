@@ -70,10 +70,21 @@ Required: product.name, product.page_url, candidates, scale (all fields except r
 ## MVP order
 1. Plugin skeleton + Eto panel with manual image URL/path + tile size inputs, thumbnail preview, and an Import button -> material + box mapping at real-world scale on the selection. (Proves the Rhino-side pipeline and the UI shell with no agent.)
 2. In-document reuse via provenance user strings.
-<!-- The original list was cut off here; add the remaining steps (agent, candidates, re-scale, PBR...). -->
+3. Agent resolver behind an `IMaterialResolver` interface: Anthropic Messages API with web search + web fetch tools, system prompt enforcing the evidence ladder, JSON-only output matching the schema (strip code fences before parsing). Wire it to the text box -> preview.
+4. Preview polish: candidate image picker, confidence display, editable scale/mapping/grain, post-import re-scale tool.
+5. Derived roughness/normal maps.
+
+## Conventions
+- Target Rhino 8: multi-target `net7.0` + `net48` (Windows/Mac). RhinoCommon and Eto via NuGet with `ExcludeAssets="runtime"`.
+- Keep Rhino-dependent code (material creation, mapping) and UI separate from the agent/HTTP layer so the agent logic is unit-testable without Rhino.
+- API key from the `ANTHROPIC_API_KEY` env var or Rhino settings. Never commit keys.
+- Units: tile sizes in mm, converted to model units.
+- Don't write RhinoCommon or Eto API calls from memory without checking them; build and test in Rhino as you go.
+- License: MIT.
 
 ## Code layout
 - `src/MaterialAgent/Core/`: no Rhino dependency (schema, provenance, image download, mapping maths). Unit tested in `tests/MaterialAgent.Tests`, which compiles these files directly because RhinoCommon cannot load outside Rhino.
 - `src/MaterialAgent/RhinoSide/`: RhinoCommon code (material creation, mapping, reuse lookup). Runs on the UI thread.
 - `src/MaterialAgent/UI/`: the Eto dockable panel.
+- Eto and Rhino.UI ship inside the RhinoCommon 8 NuGet package, so there is no separate Eto package reference.
 - Build: `dotnet build MaterialAgent.sln` (targets net7.0 + net48, outputs `MaterialAgent.rhp`). Tests: `dotnet test`.
