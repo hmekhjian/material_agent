@@ -38,6 +38,12 @@ namespace MaterialAgent.Core.Agent
         public JsonNode ResponseSchema { get; set; }
         public string ThinkingLevel { get; set; }
         public int MaxOutputTokens { get; set; } = 8192;
+        /// <summary>Set to ask for image output (e.g. "TEXT", "IMAGE"), for the image models.</summary>
+        public List<string> ResponseModalities { get; set; }
+        /// <summary>Image output aspect ratio, e.g. "1:1", "4:3".</summary>
+        public string ImageAspectRatio { get; set; }
+        /// <summary>Image output size: "1K", "2K" or "4K".</summary>
+        public string ImageSize { get; set; }
     }
 
     public sealed class GeminiUsage
@@ -68,6 +74,8 @@ namespace MaterialAgent.Core.Agent
         /// <summary>URLs the URL context tool fetched successfully.</summary>
         public List<string> FetchedUrls { get; } = new List<string>();
         public List<string> SearchQueries { get; } = new List<string>();
+        /// <summary>Images returned by image-output models.</summary>
+        public List<GeminiPart> Images { get; } = new List<GeminiPart>();
     }
 
     public sealed class GeminiApiException : Exception
@@ -174,7 +182,18 @@ namespace MaterialAgent.Core.Agent
             if (r.UseUrlContext) tools.Add(new JsonObject { ["urlContext"] = new JsonObject() });
             if (tools.Count > 0) body["tools"] = tools;
 
-            var config = new JsonObject { ["maxOutputTokens"] = r.MaxOutputTokens };
+            var config = new JsonObject();
+            if (r.ResponseModalities == null) config["maxOutputTokens"] = r.MaxOutputTokens;
+            else
+            {
+                var modalities = new JsonArray();
+                foreach (var m in r.ResponseModalities) modalities.Add(m);
+                config["responseModalities"] = modalities;
+                var image = new JsonObject();
+                if (!string.IsNullOrEmpty(r.ImageAspectRatio)) image["aspectRatio"] = r.ImageAspectRatio;
+                if (!string.IsNullOrEmpty(r.ImageSize)) image["imageSize"] = r.ImageSize;
+                if (image.Count > 0) config["imageConfig"] = image;
+            }
             if (r.ResponseSchema != null)
             {
                 config["responseMimeType"] = "application/json";
@@ -216,6 +235,10 @@ namespace MaterialAgent.Core.Agent
                     if (part?["thought"]?.GetValue<bool>() == true) continue;
                     var t = part?["text"]?.GetValue<string>();
                     if (t != null) sb.Append(t);
+                    var inline = part?["inlineData"];
+                    var data = inline?["data"]?.GetValue<string>();
+                    if (data != null)
+                        result.Images.Add(GeminiPart.FromImage(Convert.FromBase64String(data), inline["mimeType"]?.GetValue<string>() ?? "image/png"));
                 }
             }
             result.Text = sb.ToString();

@@ -11,6 +11,8 @@ Rhino 8 plugin that turns a real product name into an applied, correctly scaled 
 
 You can skip the agent with **Use your own image** (URL or file).
 
+**When no seamless texture exists:** tick **Preview tiled 2×2** to see seams. **Blend edges** (free) makes the selected image tile by blending its borders with a half-shifted copy of itself; good for swatches that almost tile. **Generate seamless (AI)** sends the selected image (plus up to two other matching images) to Gemini's image model, Nano Banana 2 (`gemini-3.1-flash-image`, set in Settings), asking for a flat, evenly lit, tileable texture covering the current width × height; code then blends the edges anyway, because image models don't reliably wrap. The generated image keeps the scale it was asked for, with confidence lowered one step, so check it (e.g. Measure in viewport). Roughly $0.05–0.10 per image at 1K. Settings can also generate one automatically when a search finds no tileable image (off by default).
+
 **Enscape:** Enscape renders the standard material this plug-in creates (base colour, normal map, roughness) and respects its real-world texture mapping, so nothing extra is needed to render. Enscape's own texture scale multiplies on top; leave it at 1. *Experimental, unverified:* only if you want to edit the material in the Enscape Material Editor, tick **Create as Enscape material** to convert the new material to Enscape's material type (Rhino's "Change Type, copy similar settings"), so it shows in the Enscape Material Editor. The checkbox is disabled when Enscape isn't detected; if conversion fails you get a standard Rhino material and a warning. If detection fails, Settings → Enscape → **List material types** prints every material type ID to the command line; paste Enscape's ID there.
 
 WebP images (what most product sites serve) are converted automatically when downloaded: lossy WebP to JPEG, lossless or transparent WebP to PNG. Provenance keeps the original WebP URL. AVIF is not supported yet.
@@ -36,6 +38,7 @@ The plug-in is `src/MaterialAgent/bin/Release/net7.0/MaterialAgent.rhp` (Rhino 8
 ## Not yet verified in Rhino
 Everything compiles against RhinoCommon 8 and the Rhino-free parts are unit tested, but nothing has been run inside Rhino yet. Check:
 - Texture bitmaps get embedded in the .3dm on save. Downloaded images and generated maps live in `%LOCALAPPDATA%\MaterialAgent\textures` only because Rhino textures reference files on disk.
+- The image model ID: `gemini-3.1-flash-image` is from third-party write-ups of Nano Banana 2; if Google uses a different ID (e.g. with `-preview`), change it in Settings.
 - Enscape conversion: whether detection finds Enscape's type, and which settings carry over (Enscape's docs don't say). Also whether Enscape uses the generated roughness *map* or only the roughness value from the standard material.
 - The API key is stored in plain text in Rhino's plug-in settings file, like other Rhino settings.
 - Material-table user strings survive Rhino's render-material sync (reuse also reads the Notes copy).

@@ -141,6 +141,32 @@ namespace MaterialAgent.Core
             };
         }
 
+        /// <summary>
+        /// Wraps image bytes made by code or an AI model (not downloaded) as a texture file in the working folder.
+        /// <paramref name="source"/> is a label for provenance, e.g. "ai-generated:model:from-url".
+        /// </summary>
+        public static FetchedImage SaveGenerated(byte[] bytes, string source)
+        {
+            var kind = ImageFormat.Sniff(bytes);
+            if (kind == ImageKind.Webp) (bytes, kind) = WebpConverter.Convert(bytes);
+            if (!ImageFormat.IsSupportedTexture(kind)) throw new InvalidDataException("The generated data is not a usable image.");
+            Directory.CreateDirectory(DownloadFolder);
+            var localPath = Path.Combine(DownloadFolder, "generated_" + FileNameFor(source + "#" + Guid.NewGuid().ToString("N"), kind));
+            File.WriteAllBytes(localPath, bytes);
+            ImageFormat.TryGetSize(bytes, out int pw, out int ph);
+            return new FetchedImage
+            {
+                Source = source,
+                IsRemote = false,
+                LocalPath = localPath,
+                Bytes = bytes,
+                Kind = kind,
+                FetchedUtc = DateTime.UtcNow,
+                PixelWidth = pw,
+                PixelHeight = ph,
+            };
+        }
+
         static async Task<byte[]> DownloadAsync(HttpClient client, Uri uri, CancellationToken ct)
         {
             using (var request = new HttpRequestMessage(HttpMethod.Get, uri))

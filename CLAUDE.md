@@ -83,14 +83,15 @@ Optional additions (implemented): `scale.feature` `{ "name", "real_mm", "count_a
 - API key entered in the panel's Settings tab (stored in Rhino plug-in settings); `GEMINI_API_KEY` / `GOOGLE_API_KEY` env var only as a fallback when nothing is saved. Never commit keys.
 - WebP is converted at download time with SixLabors.ImageSharp 2.1.x (Apache-2.0; 3.x dropped .NET Framework and changed licence). Lossy → JPEG, lossless/alpha → PNG.
 - Enscape (experimental, not yet tested in Rhino): optional conversion to Enscape's material type via `Rhino.Render.Utilities.ChangeContentType(rm, enscapeTypeId, harvestParameters: true)`. The type ID isn't published; `EnscapeSupport` detects it from `RenderContentType.GetAllAvailableTypes()` (internal name contains "enscape" and instantiates as a RenderMaterial), with a manual override in Settings. Falls back to the PBR material on failure. Per Enscape docs/forum: Enscape renders Rhino PBR materials directly and respects Rhino texture mapping (its own texture scale multiplies on top, default 1), so conversion only matters for editing in Enscape's editor; Enscape has no public material API.
+- Seamless textures: `SeamlessTile` (ImageSharp, free, deterministic) blends edges with a half-offset copy; `SeamlessTextureGenerator` asks Gemini's image model (Nano Banana 2, `gemini-3.1-flash-image`, configurable) for a flat tileable texture from the found images, then always runs `SeamlessTile` on the result. On demand from the panel, or automatically when nothing tileable is found (setting, off by default: costs per image). Generated images carry provenance `ai-generated:<model>:<reference url>`, keep the requested scale with confidence lowered one step. This is the one place image bytes go to a model and come back; downloading is still done by code.
 - Units: tile sizes in mm, converted to model units.
 - Don't write RhinoCommon or Eto API calls from memory without checking them; build and test in Rhino as you go.
 - License: MIT.
 
 ## Code layout
 - `src/MaterialAgent/Core/`: no Rhino dependency. Unit tested in `tests/MaterialAgent.Tests`, which compiles these files directly because RhinoCommon cannot load outside Rhino.
-  - `Agent/`: `IMaterialResolver`, `GeminiMaterialResolver` (pipeline below), `GeminiClient` (REST), `Prompts`, `PageImageHarvester`, `JsonText`.
-  - `WebpConverter`, `ScaleLadder` (evidence ladder + keeping size proportional to image pixels), `Provenance`, `ImageFetcher`, `ImageFormat`, `MappingMath`, `Maps/SurfaceMaps` (normal/roughness from albedo).
+  - `Agent/`: `IMaterialResolver`, `GeminiMaterialResolver` (pipeline below), `GeminiClient` (REST, text and image output), `Prompts`, `PageImageHarvester`, `JsonText`, `SeamlessTextureGenerator`.
+  - `SeamlessTile`, `WebpConverter`, `ScaleLadder` (evidence ladder + keeping size proportional to image pixels), `Provenance`, `ImageFetcher`, `ImageFormat`, `MappingMath`, `Maps/SurfaceMaps` (normal/roughness from albedo).
 - `src/MaterialAgent/RhinoSide/`: RhinoCommon code (PBR material creation, map baking via Eto bitmaps, mapping, provenance store, reuse lookup, settings). Runs on the UI thread.
 - `src/MaterialAgent/Commands/`: `MatAgent` (opens the panel), `MatAgentRescale` (pick two points + type real length).
 - `src/MaterialAgent/UI/`: the Eto dockable panel.

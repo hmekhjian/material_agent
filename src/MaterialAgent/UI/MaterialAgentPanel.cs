@@ -56,6 +56,12 @@ namespace MaterialAgent.UI
         readonly ImageView _preview = new ImageView { Size = new Size(-1, 220) };
         readonly Label _imageInfo = new Label { Text = "No image yet.", TextColor = Colors.Gray, Wrap = WrapMode.Word };
 
+        // Seamless tools
+        readonly CheckBox _tiledCheck = new CheckBox { Text = "Preview tiled 2×2", ToolTip = "Shows the image repeated, so you can spot seams and obvious repetition." };
+        readonly Button _blendButton = new Button { Text = "Blend edges", ToolTip = "Free: makes the selected image tile by blending its borders with itself. Good for swatches that almost tile." };
+        readonly Button _generateButton = new Button { Text = "Generate seamless (AI)", ToolTip = "Uses Gemini's image model (Nano Banana) and your API key to paint a flat, tileable texture from the found images. Costs a few cents per image." };
+        readonly Label _tileHint = new Label { TextColor = Colors.DarkOrange, Wrap = WrapMode.Word, Visible = false };
+
         // Manual image
         readonly TextBox _imageBox = new TextBox { PlaceholderText = "Image URL or file path" };
         readonly Button _browseButton = new Button { Text = "Browse…" };
@@ -110,6 +116,9 @@ namespace MaterialAgent.UI
         readonly Label _enscapeStatus = new Label { Wrap = WrapMode.Word };
         readonly TextBox _enscapeTypeBox = new TextBox { PlaceholderText = "Auto-detect (leave empty)" };
         readonly Button _enscapeDetectButton = new Button { Text = "Detect again" };
+        readonly TextBox _imageModelBox = new TextBox { PlaceholderText = AgentSettings.DefaultImageModel };
+        readonly DropDown _imageSizeDrop = new DropDown();
+        readonly CheckBox _autoGenerateCheck = new CheckBox { Text = "Automatically generate a seamless texture when none is found (costs per image)" };
         readonly Button _enscapeListButton = new Button { Text = "List material types", ToolTip = "Prints every material type and its ID to the Rhino command line." };
         readonly Expander _manualExpander = new Expander { Header = new Label { Text = "Use your own image" } };
 
@@ -155,6 +164,11 @@ namespace MaterialAgent.UI
             _testKeyButton.Click += async (s, e) => await TestKeyAsync();
             _clearKeyButton.Click += (s, e) => ClearKey();
             _showKeyCheck.CheckedChanged += (s, e) => ToggleShowKey();
+            _tiledCheck.CheckedChanged += (s, e) => { if (_selected >= 0 && _selected < _candidates.Count) _preview.Image = PreviewImage(_candidates[_selected].Image); };
+            _blendButton.Click += async (s, e) => await BlendEdgesAsync();
+            _generateButton.Click += async (s, e) => await GenerateSeamlessAsync(automatic: false);
+            _imageSizeDrop.Items.Add("1K (cheaper)", "1K");
+            _imageSizeDrop.Items.Add("2K (sharper, costs more)", "2K");
             _enscapeCheck.CheckedChanged += (s, e) => { if (_enscapeCheck.Enabled) AgentSettingsStore.CreateEnscape = _enscapeCheck.Checked == true; };
             _enscapeDetectButton.Click += (s, e) => { AgentSettingsStore.EnscapeTypeId = _enscapeTypeBox.Text; EnscapeSupport.Redetect(); UpdateEnscapeUi(); };
             _enscapeListButton.Click += (s, e) =>
@@ -191,6 +205,8 @@ namespace MaterialAgent.UI
             layout.AddRow(_preview);
             layout.AddRow(_candidateScroll);
             layout.AddRow(_imageInfo);
+            layout.AddRow(_tileHint);
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_tiledCheck, null, _blendButton, _generateButton) } });
 
             _manualExpander.Content = new TableLayout
             {
@@ -290,6 +306,24 @@ namespace MaterialAgent.UI
             layout.AddRow(_settingsStatus);
             layout.AddRow(_keySourceLabel);
 
+            layout.AddRow(Header("Seamless texture generation"));
+            layout.AddRow(new TableLayout
+            {
+                Spacing = new Size(6, 4),
+                Rows =
+                {
+                    new TableRow(Caption("Image model"), new TableCell(_imageModelBox, true)),
+                    new TableRow(Caption("Size"), new TableCell(_imageSizeDrop, true)),
+                },
+            });
+            layout.AddRow(new Label
+            {
+                Text = $"Default {AgentSettings.DefaultImageModel} (\"Nano Banana 2\"). Uses the same API key; saved with Save above.",
+                TextColor = Colors.Gray,
+                Wrap = WrapMode.Word,
+            });
+            layout.AddRow(_autoGenerateCheck);
+
             layout.AddRow(Header("Enscape"));
             layout.AddRow(_enscapeStatus);
             layout.AddRow(new TableLayout { Spacing = new Size(6, 4), Rows = { new TableRow(Caption("Material type ID"), new TableCell(_enscapeTypeBox, true)) } });
@@ -374,6 +408,10 @@ namespace MaterialAgent.UI
             SetStatus(msg);
             _progressLabel.Text = r.Sources.Count > 0 ? "Sources: " + string.Join(", ", r.Sources.Take(4).Select(s => s.Key)) : "";
             RefreshExisting();
+
+            bool anyTileable = r.Candidates.Any(c => c.LikelyTileable && c.MatchesProduct);
+            if (!anyTileable && AgentSettingsStore.AutoGenerateSeamless)
+                Application.Instance.AsyncInvoke(async () => await GenerateSeamlessAsync(automatic: true));
         }
 
         void ShowExisting(ExistingMaterial existing)
@@ -449,7 +487,10 @@ namespace MaterialAgent.UI
             _selected = index;
             var c = _candidates[index];
             _image = c.Image;
-            _preview.Image = Decode(c.Image);
+            _preview.Image = PreviewImage(c.Image);
+            bool tiles = c.LikelyTileable || c.Kind == "generated" || c.Kind == "blended";
+            _tileHint.Visible = !tiles;
+            _tileHint.Text = "This image may not tile cleanly (check with Preview tiled). Try Blend edges, or Generate seamless (AI).";
             for (int i = 0; i < _candidateStrip.Items.Count; i++)
                 if (_candidateStrip.Items[i].Control is Panel p)
                     p.BackgroundColor = i == index ? SystemColors.Highlight : Colors.Transparent;
@@ -475,7 +516,11 @@ namespace MaterialAgent.UI
             if (!string.IsNullOrEmpty(c.Kind)) bits.Add(c.Kind);
             bits.Add(c.LikelyTileable ? "tileable" : "may not tile");
             if (!c.MatchesProduct) bits.Add("may be a different product");
-            bits.Add(c.FromPage ? "from product page" : c.Kind == "manual" ? "your image" : "suggested by agent");
+            bits.Add(c.FromPage ? "from product page"
+                : c.Kind == "manual" ? "your image"
+                : c.Kind == "generated" ? "AI-generated"
+                : c.Kind == "blended" ? "edges blended in code"
+                : "suggested by agent");
             if (!string.IsNullOrWhiteSpace(c.Note)) bits.Add(c.Note);
             return string.Join(" · ", bits);
         }
@@ -485,6 +530,100 @@ namespace MaterialAgent.UI
             if (image?.Bytes == null) return null;
             try { using (var ms = new MemoryStream(image.Bytes)) return new Bitmap(ms); }
             catch { return null; }
+        }
+
+        // ================================================================ seamless tools
+
+        /// <summary>The selected image, or a 2×2 tiling of it (downscaled) so seams show.</summary>
+        Image PreviewImage(FetchedImage image)
+        {
+            var bmp = Decode(image);
+            if (bmp == null || _tiledCheck.Checked != true) return bmp;
+            const int maxSide = 400;
+            double s = Math.Min(1.0, (double)maxSide / Math.Max(bmp.Width, bmp.Height));
+            int w = Math.Max(1, (int)(bmp.Width * s)), h = Math.Max(1, (int)(bmp.Height * s));
+            var tiled = new Bitmap(w * 2, h * 2, PixelFormat.Format32bppRgb);
+            using (var g = new Graphics(tiled))
+            {
+                g.ImageInterpolation = ImageInterpolation.High;
+                for (int ty = 0; ty < 2; ty++)
+                    for (int tx = 0; tx < 2; tx++)
+                        g.DrawImage(bmp, tx * w, ty * h, w, h);
+            }
+            bmp.Dispose();
+            return tiled;
+        }
+
+        CandidateImage SelectedCandidate => _selected >= 0 && _selected < _candidates.Count ? _candidates[_selected] : null;
+
+        void AddAndSelect(CandidateImage c)
+        {
+            var list = new List<CandidateImage> { c };
+            list.AddRange(_candidates);
+            SetCandidates(list);
+        }
+
+        async Task BlendEdgesAsync()
+        {
+            var source = SelectedCandidate;
+            if (source == null) { SetStatus("Find a product or load an image first.", true); return; }
+            var cts = BeginBusy("Blending edges…");
+            try
+            {
+                var blended = await Task.Run(() =>
+                    ImageFetcher.SaveGenerated(SeamlessTile.MakeSeamless(source.Image.Bytes), "seamless-blend:" + source.Url), cts.Token);
+                OnUi(() =>
+                {
+                    if (cts != _cts) return;
+                    // Blending keeps the pixel size, so the real-world scale stays as it is.
+                    AddAndSelect(new CandidateImage { Url = blended.Source, Image = blended, Kind = "blended", LikelyTileable = true, Note = "from the selected image" });
+                    _tiledCheck.Checked = true;
+                    SetStatus("Made a tileable version by blending the edges. Check the tiled preview for ghosting or obvious repeats.");
+                });
+            }
+            catch (OperationCanceledException) { OnUi(() => SetStatus("Cancelled.")); }
+            catch (Exception ex) { OnUi(() => SetStatus("Blend failed: " + ex.Message, true)); }
+            finally { OnUi(() => EndBusy(cts)); }
+        }
+
+        async Task GenerateSeamlessAsync(bool automatic)
+        {
+            var selected = SelectedCandidate;
+            if (selected == null) { SetStatus("Find a product or load an image first.", true); return; }
+            var settings = AgentSettingsStore.Load();
+            if (string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _tabs.SelectedPage = _settingsPage;
+                SetSettingsStatus("Generating a texture needs your Gemini API key. Paste it here and press Save.", true);
+                return;
+            }
+
+            // The selected image first, then other images that look like the product (not earlier generations).
+            var references = new List<CandidateImage> { selected };
+            references.AddRange(_candidates.Where(c => c != selected && c.MatchesProduct && c.Kind != "generated" && c.Kind != "blended"));
+            var product = new ProductInfo { Name = NullIfBlank(_nameBox.Text), Code = NullIfBlank(_codeBox.Text), Manufacturer = NullIfBlank(_manufacturerBox.Text) };
+            var basis = new ScaleDecision { WidthMm = _widthMm.Value, HeightMm = _heightMm.Value, Source = _scaleSource, Confidence = _scaleConfidence, Rationale = _rationaleLabel.Text };
+            double w = _widthMm.Value, h = _heightMm.Value;
+            var category = _result?.Category;
+            var finish = CurrentFinish();
+
+            var cts = BeginBusy(automatic ? "No seamless image found: generating one…" : "Generating a seamless texture…");
+            try
+            {
+                var generator = new SeamlessTextureGenerator(settings);
+                var generated = await Task.Run(() => generator.GenerateAsync(product, category, finish, references, w, h, basis, cts.Token), cts.Token);
+                OnUi(() =>
+                {
+                    if (cts != _cts) return;
+                    AddAndSelect(generated.Candidate);
+                    ApplyScaleDecision(generated.Scale);
+                    _tiledCheck.Checked = true;
+                    SetStatus($"Generated a seamless texture with {settings.ImageModel}. Compare it with the product photos before importing; AI images can drift in colour and pattern. (~{generated.Usage.Total:N0} tokens)");
+                });
+            }
+            catch (OperationCanceledException) { OnUi(() => SetStatus("Cancelled.")); }
+            catch (Exception ex) { OnUi(() => SetStatus("Generation failed: " + ex.Message, true)); }
+            finally { OnUi(() => EndBusy(cts)); }
         }
 
         // ================================================================ manual image
@@ -541,6 +680,8 @@ namespace MaterialAgent.UI
             _resolveButton.Enabled = false;
             _loadButton.Enabled = false;
             _browseButton.Enabled = false;
+            _blendButton.Enabled = false;
+            _generateButton.Enabled = false;
             _progressLabel.Text = message;
             SetStatus("");
             UpdateButtons();
@@ -557,6 +698,8 @@ namespace MaterialAgent.UI
                 _resolveButton.Enabled = true;
                 _loadButton.Enabled = true;
                 _browseButton.Enabled = true;
+                _blendButton.Enabled = true;
+                _generateButton.Enabled = true;
                 if (_result == null || _progressLabel.Text.EndsWith("…")) _progressLabel.Text = "";
             }
             cts.Dispose();
@@ -811,6 +954,9 @@ namespace MaterialAgent.UI
             _apiKeyBox.Text = AgentSettingsStore.SavedApiKey;
             _apiKeyPlain.Text = _apiKeyBox.Text;
             _modelBox.Text = AgentSettingsStore.SavedModel;
+            _imageModelBox.Text = AgentSettingsStore.ImageModel;
+            _imageSizeDrop.SelectedKey = AgentSettingsStore.ImageSize == "2K" ? "2K" : "1K";
+            _autoGenerateCheck.Checked = AgentSettingsStore.AutoGenerateSeamless;
             UpdateKeySourceLabel();
             if (string.IsNullOrWhiteSpace(AgentSettings.ResolveApiKey(AgentSettingsStore.SavedApiKey)))
             {
@@ -843,6 +989,9 @@ namespace MaterialAgent.UI
         void SaveSettings()
         {
             AgentSettingsStore.Save(TypedKey, _modelBox.Text);
+            AgentSettingsStore.ImageModel = _imageModelBox.Text;
+            AgentSettingsStore.ImageSize = _imageSizeDrop.SelectedKey ?? "1K";
+            AgentSettingsStore.AutoGenerateSeamless = _autoGenerateCheck.Checked == true;
             UpdateKeySourceLabel();
             SetSettingsStatus(string.IsNullOrEmpty(TypedKey) ? "Saved (no key)." : "Saved. Press Test key to check it.");
         }

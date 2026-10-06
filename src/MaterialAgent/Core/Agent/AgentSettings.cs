@@ -10,6 +10,10 @@ namespace MaterialAgent.Core.Agent
         /// </summary>
         public const string DefaultModel = "gemini-flash-latest";
 
+        /// <summary>"Nano Banana 2". Used only for the optional seamless-texture generation.</summary>
+        public const string DefaultImageModel = "gemini-3.1-flash-image";
+        public const string DefaultImageSize = "1K";
+
         public const string EnvApiKey = "GEMINI_API_KEY";
         public const string EnvApiKeyAlt = "GOOGLE_API_KEY";
 
@@ -19,6 +23,11 @@ namespace MaterialAgent.Core.Agent
         public string ThinkingLevel { get; set; } = "low";
         /// <summary>How many candidate images to download and show the vision model.</summary>
         public int MaxCandidates { get; set; } = 6;
+        public string ImageModel { get; set; } = DefaultImageModel;
+        /// <summary>"1K" or "2K" (higher costs more).</summary>
+        public string ImageSize { get; set; } = DefaultImageSize;
+        /// <summary>Generate a seamless texture automatically when the search finds no tileable image. Costs per image.</summary>
+        public bool AutoGenerateSeamless { get; set; }
 
         /// <summary>The key typed into the panel's Settings tab wins; the environment variable is only a fallback.</summary>
         public static string ResolveApiKey(string saved)
