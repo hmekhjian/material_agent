@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Rhino 8 runs on .NET 7+ (default) and can fall back to .NET Framework 4.8 on Windows. -->
+    <TargetFrameworks>net7.0;net48</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>MaterialAgent</RootNamespace>
+    <AssemblyName>MaterialAgent</AssemblyName>
+    <TargetExt>.rhp</TargetExt>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <NoWarn>$(NoWarn);NU1701;NETSDK1138</NoWarn>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned to the first Rhino 8 release so the plug-in loads on any Rhino 8 service release. -->
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\MaterialAgent.ico" LogicalName="MaterialAgent.Resources.MaterialAgent.ico" />
+  </ItemGroup>
+
+</Project>
