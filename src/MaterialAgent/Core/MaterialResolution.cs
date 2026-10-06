@@ -17,6 +17,8 @@ namespace MaterialAgent.Core
         [JsonPropertyName("grain_axis")] public string GrainAxis { get; set; }
         [JsonPropertyName("mapping")] public string Mapping { get; set; }
         [JsonPropertyName("category")] public string Category { get; set; }
+        /// <summary>Optional: surface finish (matt|satin|gloss|polished|textured), drives the roughness preset.</summary>
+        [JsonPropertyName("finish")] public string Finish { get; set; }
 
         static readonly JsonSerializerOptions Options = new JsonSerializerOptions
         {
@@ -69,6 +71,9 @@ namespace MaterialAgent.Core
             if (!EnumText.TryParseMapping(Mapping, out _)) errors.Add("mapping must be planar|box|per_face");
             if (GrainAxis != null && !EnumText.TryParseGrain(GrainAxis, out _)) errors.Add("grain_axis must be horizontal|vertical|none");
             if (string.IsNullOrWhiteSpace(Category)) errors.Add("category is required");
+            if (!string.IsNullOrEmpty(Finish) && !EnumText.TryParseFinish(Finish, out _)) errors.Add("finish must be matt|satin|gloss|polished|textured");
+            if (Scale?.Feature != null && !Scale.Feature.IsUsable)
+                errors.Add("scale.feature needs real_mm > 0 and count_across > 0");
 
             return errors;
         }
@@ -100,5 +105,25 @@ namespace MaterialAgent.Core
         [JsonPropertyName("source")] public string Source { get; set; }
         [JsonPropertyName("confidence")] public string Confidence { get; set; }
         [JsonPropertyName("rationale")] public string Rationale { get; set; }
+        /// <summary>Optional evidence for source=image_feature. The size is computed in code, not by the model.</summary>
+        [JsonPropertyName("feature")] public ScaleFeature Feature { get; set; }
+    }
+
+    /// <summary>
+    /// A repeating feature of known real size visible in the image (planks, bricks, tiles, slats).
+    /// The model counts; code multiplies.
+    /// </summary>
+    public sealed class ScaleFeature
+    {
+        [JsonPropertyName("name")] public string Name { get; set; }
+        /// <summary>Real size of one feature along <see cref="Axis"/>, in mm.</summary>
+        [JsonPropertyName("real_mm")] public double RealMm { get; set; }
+        /// <summary>How many of the features span the image along <see cref="Axis"/> (may be fractional).</summary>
+        [JsonPropertyName("count_across")] public double CountAcross { get; set; }
+        /// <summary>"width" or "height": which image dimension was counted.</summary>
+        [JsonPropertyName("axis")] public string Axis { get; set; }
+
+        [JsonIgnore] public bool IsUsable => RealMm > 0 && CountAcross > 0;
+        [JsonIgnore] public bool AlongHeight => string.Equals(Axis, "height", System.StringComparison.OrdinalIgnoreCase);
     }
 }

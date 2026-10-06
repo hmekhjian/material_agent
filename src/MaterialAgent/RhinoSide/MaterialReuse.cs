@@ -17,14 +17,23 @@ namespace MaterialAgent.RhinoSide
     {
         public static ExistingMaterial Find(RhinoDoc doc, string productCode, string imageUrl)
         {
-            if (doc == null) return null;
             if (string.IsNullOrWhiteSpace(productCode) && string.IsNullOrWhiteSpace(imageUrl)) return null;
+            return Find(doc, p => p.Matches(productCode, imageUrl));
+        }
+
+        /// <summary>Finds a material whose product code appears in a free-text search, before calling the agent.</summary>
+        public static ExistingMaterial FindByQuery(RhinoDoc doc, string query) =>
+            string.IsNullOrWhiteSpace(query) ? null : Find(doc, p => p.MatchesQuery(query));
+
+        static ExistingMaterial Find(RhinoDoc doc, Func<Provenance, bool> match)
+        {
+            if (doc == null) return null;
 
             // 1. Render material notes (always written).
             foreach (var rm in doc.RenderMaterials)
             {
                 var p = Provenance.FromNotes(rm.Notes);
-                if (p != null && p.Matches(productCode, imageUrl))
+                if (p != null && match(p))
                     return new ExistingMaterial { Material = rm, Provenance = p };
             }
 
@@ -32,7 +41,7 @@ namespace MaterialAgent.RhinoSide
             foreach (var m in doc.Materials.Where(x => x != null && !x.IsDeleted))
             {
                 var p = Provenance.FromLookup(m.GetUserString);
-                if (p == null || !p.Matches(productCode, imageUrl)) continue;
+                if (p == null || !match(p)) continue;
                 var rm = m.RenderMaterialInstanceId != Guid.Empty ? doc.RenderMaterials.Find(m.RenderMaterialInstanceId) : null;
                 if (rm != null) return new ExistingMaterial { Material = rm, Provenance = p };
             }

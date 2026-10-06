@@ -36,8 +36,43 @@ namespace MaterialAgent.Core
         High,
     }
 
+    /// <summary>Surface finish. Drives the base roughness of the PBR material.</summary>
+    public enum Finish
+    {
+        Matt,
+        Satin,
+        Gloss,
+        Polished,
+        Textured,
+    }
+
     public static class EnumText
     {
+        public static string ToWire(Finish f) => f.ToString().ToLowerInvariant();
+
+        public static bool TryParseFinish(string s, out Finish value)
+        {
+            switch ((s ?? "").Trim().ToLowerInvariant())
+            {
+                case "matt": case "matte": value = Finish.Matt; return true;
+                case "satin": case "silk": value = Finish.Satin; return true;
+                case "gloss": case "glossy": case "high gloss": value = Finish.Gloss; return true;
+                case "polished": value = Finish.Polished; return true;
+                case "textured": case "structured": value = Finish.Textured; return true;
+                default: value = Finish.Matt; return false;
+            }
+        }
+
+        /// <summary>Base PBR roughness for a finish (0 = mirror, 1 = fully diffuse).</summary>
+        public static double Roughness(Finish f) => f switch
+        {
+            Finish.Polished => 0.08,
+            Finish.Gloss => 0.2,
+            Finish.Satin => 0.45,
+            Finish.Textured => 0.8,
+            _ => 0.7,
+        };
+
         public static string ToWire(MappingKind m) => m switch
         {
             MappingKind.Planar => "planar",

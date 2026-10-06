@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MaterialAgent.Core;
 using Rhino;
+using Rhino.Display;
 using Rhino.DocObjects;
 using Rhino.Render;
 
@@ -14,6 +15,8 @@ namespace MaterialAgent.RhinoSide
         public bool Reused { get; set; }
         public int AssignedCount { get; set; }
         public int MappedCount { get; set; }
+        public bool MapsGenerated { get; set; }
+        public string MapError { get; set; }
     }
 
     /// <summary>Creates (or reuses) the material and applies it to objects. Call on the UI thread.</summary>
@@ -24,11 +27,20 @@ namespace MaterialAgent.RhinoSide
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             if (settings?.Image == null && reuse == null) throw new InvalidOperationException("No image loaded.");
 
+            var result = new ImportResult { Reused = reuse != null };
+
+            // Bake maps before the undo record: it's file work, not document work.
+            BakedMaps maps = null;
+            if (reuse == null && settings.GenerateMaps)
+            {
+                try { maps = MapBaker.Bake(settings.Image, settings.Finish); result.MapsGenerated = true; }
+                catch (Exception ex) { result.MapError = ex.Message; }
+            }
+
             uint undo = doc.BeginUndoRecord("Material Agent import");
             try
             {
-                var result = new ImportResult { Reused = reuse != null };
-                result.Material = reuse ?? CreateRenderMaterial(doc, settings);
+                result.Material = reuse ?? CreateRenderMaterial(doc, settings, maps);
 
                 foreach (var obj in targets)
                 {
@@ -41,7 +53,7 @@ namespace MaterialAgent.RhinoSide
                 result.MappedCount = MappingApplier.Apply(doc, targets, settings.Mapping);
 
                 if (!result.Reused)
-                    WriteUserStrings(doc, result.Material, settings.Provenance);
+                    ProvenanceStore.WriteUserStrings(doc, result.Material, settings.Provenance);
 
                 doc.Views.Redraw();
                 return result;
@@ -52,21 +64,32 @@ namespace MaterialAgent.RhinoSide
             }
         }
 
-        static RenderMaterial CreateRenderMaterial(RhinoDoc doc, ImportSettings settings)
+        static Texture BitmapTexture(string path) => new Texture
         {
-            var texture = new Texture
-            {
-                FileName = settings.Image.LocalPath,
-                WrapU = TextureUvwWrapping.Repeat,
-                WrapV = TextureUvwWrapping.Repeat,
-                WrapW = TextureUvwWrapping.Repeat,
-            };
-            // Texture.MappingChannelId is read-only; new textures use mapping channel 1 (MappingApplier.Channel).
+            FileName = path,
+            WrapU = TextureUvwWrapping.Repeat,
+            WrapV = TextureUvwWrapping.Repeat,
+            WrapW = TextureUvwWrapping.Repeat,
+        };
+        // Texture.MappingChannelId is read-only; new textures use mapping channel 1 (MappingApplier.Channel).
 
+        static RenderMaterial CreateRenderMaterial(RhinoDoc doc, ImportSettings settings, BakedMaps maps)
+        {
             var material = new Material { Name = settings.MaterialName };
-            material.SetBitmapTexture(texture);
+            material.ToPhysicallyBased();
+            var pbr = material.PhysicallyBased;
+            pbr.BaseColor = new Color4f(1f, 1f, 1f, 1f); // don't tint the texture
+            pbr.Metallic = 0;
+            pbr.Roughness = EnumText.Roughness(settings.Finish);
+            pbr.SetTexture(BitmapTexture(settings.Image.LocalPath), TextureType.PBR_BaseColor);
+            if (maps != null)
+            {
+                pbr.SetTexture(BitmapTexture(maps.RoughnessPath), TextureType.PBR_Roughness);
+                // Rhino reads a normal map placed in the bump slot. TODO verify in Rhino that it is detected as a normal map.
+                pbr.SetTexture(BitmapTexture(maps.NormalPath), TextureType.Bump);
+            }
 
-            var rm = RenderMaterial.CreateBasicMaterial(material, doc);
+            var rm = RenderMaterial.FromMaterial(material, doc) ?? RenderMaterial.CreateBasicMaterial(material, doc);
             rm.Name = settings.MaterialName;
             if (settings.Provenance != null)
                 rm.Notes = settings.Provenance.ToNotes();
@@ -74,22 +97,6 @@ namespace MaterialAgent.RhinoSide
             doc.RenderMaterials.Add(rm);
             // Add() may wrap or copy the content; return the instance that lives in the document.
             return doc.RenderMaterials.Find(rm.Id) ?? rm;
-        }
-
-        /// <summary>
-        /// Writes provenance to the document Material's user strings. The material table entry only exists
-        /// once the render material is used by an object, so this is best-effort; the render material's
-        /// Notes always carry the same data.
-        /// </summary>
-        static void WriteUserStrings(RhinoDoc doc, RenderMaterial rm, Provenance provenance)
-        {
-            if (provenance == null || rm == null) return;
-            foreach (var m in doc.Materials.Where(x => x != null && !x.IsDeleted && x.RenderMaterialInstanceId == rm.Id).ToList())
-            {
-                foreach (var kv in provenance.ToPairs())
-                    m.SetUserString(kv.Key, kv.Value);
-                doc.Materials.Modify(m, m.Index, true);
-            }
         }
     }
 }

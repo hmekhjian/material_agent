@@ -26,6 +26,9 @@ namespace MaterialAgent.Core
         public const string KeyHeightMm = Prefix + "height_mm";
         public const string KeyMapping = Prefix + "mapping";
         public const string KeyGrain = Prefix + "grain_axis";
+        public const string KeyFinish = Prefix + "finish";
+        public const string KeyRotate90 = Prefix + "rotate90";
+        public const string KeyCategory = Prefix + "category";
 
         const string NotesHeader = "[Material Agent provenance]";
 
@@ -42,6 +45,9 @@ namespace MaterialAgent.Core
         public double HeightMm { get; set; }
         public MappingKind Mapping { get; set; } = MappingKind.Box;
         public GrainAxis Grain { get; set; } = GrainAxis.None;
+        public Finish Finish { get; set; } = Finish.Matt;
+        public bool Rotate90 { get; set; }
+        public string Category { get; set; }
 
         public IEnumerable<KeyValuePair<string, string>> ToPairs()
         {
@@ -58,6 +64,9 @@ namespace MaterialAgent.Core
             yield return Pair(KeyHeightMm, HeightMm.ToString("0.###", ci));
             yield return Pair(KeyMapping, EnumText.ToWire(Mapping));
             yield return Pair(KeyGrain, EnumText.ToWire(Grain));
+            yield return Pair(KeyFinish, EnumText.ToWire(Finish));
+            yield return Pair(KeyRotate90, Rotate90 ? "true" : "false");
+            yield return Pair(KeyCategory, Category);
         }
 
         static KeyValuePair<string, string> Pair(string k, string v) => new KeyValuePair<string, string>(k, v ?? "");
@@ -88,6 +97,9 @@ namespace MaterialAgent.Core
             if (double.TryParse(get(KeyHeightMm), NumberStyles.Float, ci, out var h)) p.HeightMm = h;
             if (EnumText.TryParseMapping(get(KeyMapping), out var m)) p.Mapping = m;
             if (EnumText.TryParseGrain(get(KeyGrain), out var g)) p.Grain = g;
+            if (EnumText.TryParseFinish(get(KeyFinish), out var f)) p.Finish = f;
+            p.Rotate90 = string.Equals(get(KeyRotate90), "true", StringComparison.OrdinalIgnoreCase);
+            p.Category = NullIfEmpty(get(KeyCategory));
             return p;
         }
 
@@ -130,6 +142,19 @@ namespace MaterialAgent.Core
                 string.Equals(imageUrl.Trim(), ImageUrl.Trim(), StringComparison.OrdinalIgnoreCase))
                 return true;
             return false;
+        }
+
+        /// <summary>
+        /// True if a free-text search ("Egger H1145 ST10") names this material: its normalised product code
+        /// appears in the normalised query, or the query equals the product name.
+        /// </summary>
+        public bool MatchesQuery(string query)
+        {
+            if (string.IsNullOrWhiteSpace(query)) return false;
+            var q = NormalizeCode(query);
+            var code = NormalizeCode(ProductCode);
+            if (code.Length >= 3 && q.Contains(code)) return true;
+            return !string.IsNullOrWhiteSpace(ProductName) && q == NormalizeCode(ProductName);
         }
 
         public static string NormalizeCode(string code)

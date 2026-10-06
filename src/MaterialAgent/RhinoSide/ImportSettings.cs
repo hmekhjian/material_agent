@@ -9,6 +9,9 @@ namespace MaterialAgent.RhinoSide
         public FetchedImage Image { get; set; }
         public Provenance Provenance { get; set; }
         public MappingSettings Mapping { get; set; }
+        public Finish Finish { get; set; } = Finish.Matt;
+        /// <summary>Derive normal and roughness maps from the albedo.</summary>
+        public bool GenerateMaps { get; set; }
     }
 
     public sealed class MappingSettings

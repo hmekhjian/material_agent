@@ -19,6 +19,12 @@ namespace MaterialAgent.Core
         public byte[] Bytes { get; set; }
         public ImageKind Kind { get; set; }
         public DateTime FetchedUtc { get; set; }
+        /// <summary>Pixel size from the file header; 0 if unknown (e.g. TIFF).</summary>
+        public int PixelWidth { get; set; }
+        public int PixelHeight { get; set; }
+
+        /// <summary>Height / width, or 0 if unknown.</summary>
+        public double Aspect => PixelWidth > 0 && PixelHeight > 0 ? (double)PixelHeight / PixelWidth : 0;
     }
 
     /// <summary>
@@ -28,13 +34,23 @@ namespace MaterialAgent.Core
     {
         public const long MaxBytes = 60L * 1024 * 1024;
 
-        static readonly Lazy<HttpClient> Client = new Lazy<HttpClient>(() =>
+        public const string UserAgent = "Mozilla/5.0 (compatible; MaterialAgent/0.1; Rhino 8 plug-in)";
+
+        static readonly Lazy<HttpClient> SharedClient = new Lazy<HttpClient>(() => CreateClient(null));
+
+        /// <summary>Shared client for page and image downloads. Tests pass their own handler.</summary>
+        public static HttpClient CreateClient(HttpMessageHandler handler)
         {
-            var c = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-            c.DefaultRequestHeaders.UserAgent.ParseAdd("MaterialAgent/0.1 (Rhino 8 plug-in)");
-            c.DefaultRequestHeaders.Accept.ParseAdd("image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5");
+            var c = handler == null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
+            c.Timeout = TimeSpan.FromSeconds(60);
+            c.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
             return c;
-        });
+        }
+
+        public static HttpClient Default => SharedClient.Value;
+
+        /// <summary>Overrides <see cref="DownloadFolder"/> (tests).</summary>
+        public static string DownloadFolderOverride { get; set; }
 
         /// <summary>
         /// Folder downloaded textures are written to. This is not a texture library: it only exists because
@@ -44,13 +60,16 @@ namespace MaterialAgent.Core
         {
             get
             {
+                if (!string.IsNullOrEmpty(DownloadFolderOverride)) return DownloadFolderOverride;
                 var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 if (string.IsNullOrEmpty(root)) root = Path.GetTempPath();
                 return Path.Combine(root, "MaterialAgent", "textures");
             }
         }
 
-        public static async Task<FetchedImage> FetchAsync(string source, CancellationToken ct)
+        public static Task<FetchedImage> FetchAsync(string source, CancellationToken ct) => FetchAsync(source, null, ct);
+
+        public static async Task<FetchedImage> FetchAsync(string source, HttpClient client, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(source)) throw new ArgumentException("No image URL or file path given.");
             source = source.Trim().Trim('"');
@@ -60,7 +79,7 @@ namespace MaterialAgent.Core
             if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
             {
                 remote = true;
-                bytes = await DownloadAsync(uri, ct).ConfigureAwait(false);
+                bytes = await DownloadAsync(client ?? Default, uri, ct).ConfigureAwait(false);
             }
             else
             {
@@ -96,8 +115,11 @@ namespace MaterialAgent.Core
                 localPath = source;
             }
 
+            ImageFormat.TryGetSize(bytes, out int pw, out int ph);
             return new FetchedImage
             {
+                PixelWidth = pw,
+                PixelHeight = ph,
                 Source = source,
                 IsRemote = remote,
                 LocalPath = localPath,
@@ -107,29 +129,39 @@ namespace MaterialAgent.Core
             };
         }
 
-        static async Task<byte[]> DownloadAsync(Uri uri, CancellationToken ct)
+        static async Task<byte[]> DownloadAsync(HttpClient client, Uri uri, CancellationToken ct)
         {
-            using (var response = await Client.Value.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
+            using (var request = new HttpRequestMessage(HttpMethod.Get, uri))
             {
-                if (!response.IsSuccessStatusCode)
-                    throw new HttpRequestException($"Download failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
-                var len = response.Content.Headers.ContentLength;
-                if (len.HasValue && len.Value > MaxBytes)
-                    throw new InvalidDataException($"Image is larger than {MaxBytes / (1024 * 1024)} MB.");
-
-                using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                using (var ms = new MemoryStream())
+                request.Headers.Accept.ParseAdd("image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5");
+                using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                 {
-                    var buffer = new byte[81920];
-                    int read;
-                    while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) > 0)
-                    {
-                        ms.Write(buffer, 0, read);
-                        if (ms.Length > MaxBytes)
-                            throw new InvalidDataException($"Image is larger than {MaxBytes / (1024 * 1024)} MB.");
-                    }
-                    return ms.ToArray();
+                    if (!response.IsSuccessStatusCode)
+                        throw new HttpRequestException($"Download failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+                    return await ReadLimitedAsync(response.Content, MaxBytes, ct).ConfigureAwait(false);
                 }
+            }
+        }
+
+        /// <summary>Reads a response body, refusing anything larger than <paramref name="limit"/> bytes.</summary>
+        public static async Task<byte[]> ReadLimitedAsync(HttpContent content, long limit, CancellationToken ct)
+        {
+            var len = content.Headers.ContentLength;
+            if (len.HasValue && len.Value > limit)
+                throw new InvalidDataException($"Response is larger than {limit / (1024 * 1024)} MB.");
+
+            using (var stream = await content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var ms = new MemoryStream())
+            {
+                var buffer = new byte[81920];
+                int read;
+                while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) > 0)
+                {
+                    ms.Write(buffer, 0, read);
+                    if (ms.Length > limit)
+                        throw new InvalidDataException($"Response is larger than {limit / (1024 * 1024)} MB.");
+                }
+                return ms.ToArray();
             }
         }
 

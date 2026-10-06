@@ -54,6 +54,8 @@ Open design detail: prefer a **modeless / dockable Eto panel** (`Rhino.UI.Panels
 ```
 Required: product.name, product.page_url, candidates, scale (all fields except rationale), mapping, category.
 
+Optional additions (implemented): `scale.feature` `{ "name", "real_mm", "count_across", "axis": "width|height" }` for the image-feature rung (the model counts, code multiplies), and `finish` (`matt|satin|gloss|polished|textured`, drives roughness).
+
 ## Rhino-side approach
 - Create a `Material`, set the texture as the diffuse/base colour, wrap in a `RenderMaterial`, add it to the document, and assign it to the selected objects.
 - Mapping: `TextureMapping.CreateBoxMapping` / `CreatePlaneMapping` with interval extents equal to the real-world repeat size (mm converted via `RhinoMath.UnitScale`), so one UV cycle equals one texture repeat. Texture wrap = repeat.
@@ -70,21 +72,27 @@ Required: product.name, product.page_url, candidates, scale (all fields except r
 ## MVP order
 1. Plugin skeleton + Eto panel with manual image URL/path + tile size inputs, thumbnail preview, and an Import button -> material + box mapping at real-world scale on the selection. (Proves the Rhino-side pipeline and the UI shell with no agent.)
 2. In-document reuse via provenance user strings.
-3. Agent resolver behind an `IMaterialResolver` interface: Anthropic Messages API with web search + web fetch tools, system prompt enforcing the evidence ladder, JSON-only output matching the schema (strip code fences before parsing). Wire it to the text box -> preview.
+3. Agent resolver behind an `IMaterialResolver` interface: Gemini API (Flash, for cost) with the Google Search + URL context tools, system prompt enforcing the evidence ladder, JSON-only output matching the schema (structured output when the model supports it; strip code fences before parsing either way). Wire it to the text box -> preview.
 4. Preview polish: candidate image picker, confidence display, editable scale/mapping/grain, post-import re-scale tool.
 5. Derived roughness/normal maps.
 
 ## Conventions
 - Target Rhino 8: multi-target `net7.0` + `net48` (Windows/Mac). RhinoCommon and Eto via NuGet with `ExcludeAssets="runtime"`.
 - Keep Rhino-dependent code (material creation, mapping) and UI separate from the agent/HTTP layer so the agent logic is unit-testable without Rhino.
-- API key from the `ANTHROPIC_API_KEY` env var or Rhino settings. Never commit keys.
+- Agent provider: Gemini (`gemini-flash-latest` by default, configurable in the panel). Chosen over Claude/Qwen for cost: Flash is cheap, multimodal, and search + page fetching are built into the API, so no separate search API is needed.
+- API key from the `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) env var or Rhino settings. Never commit keys.
 - Units: tile sizes in mm, converted to model units.
 - Don't write RhinoCommon or Eto API calls from memory without checking them; build and test in Rhino as you go.
 - License: MIT.
 
 ## Code layout
-- `src/MaterialAgent/Core/`: no Rhino dependency (schema, provenance, image download, mapping maths). Unit tested in `tests/MaterialAgent.Tests`, which compiles these files directly because RhinoCommon cannot load outside Rhino.
-- `src/MaterialAgent/RhinoSide/`: RhinoCommon code (material creation, mapping, reuse lookup). Runs on the UI thread.
+- `src/MaterialAgent/Core/`: no Rhino dependency. Unit tested in `tests/MaterialAgent.Tests`, which compiles these files directly because RhinoCommon cannot load outside Rhino.
+  - `Agent/`: `IMaterialResolver`, `GeminiMaterialResolver` (pipeline below), `GeminiClient` (REST), `Prompts`, `PageImageHarvester`, `JsonText`.
+  - `ScaleLadder` (evidence ladder + keeping size proportional to image pixels), `Provenance`, `ImageFetcher`, `ImageFormat`, `MappingMath`, `Maps/SurfaceMaps` (normal/roughness from albedo).
+- `src/MaterialAgent/RhinoSide/`: RhinoCommon code (PBR material creation, map baking via Eto bitmaps, mapping, provenance store, reuse lookup, settings). Runs on the UI thread.
+- `src/MaterialAgent/Commands/`: `MatAgent` (opens the panel), `MatAgentRescale` (pick two points + type real length).
 - `src/MaterialAgent/UI/`: the Eto dockable panel.
+
+Resolver pipeline: (1) research call with Google Search + URL context returns MaterialResolution JSON, validated, one repair round; (2) code downloads the model's candidate URLs and also harvests images from the product page HTML (models often can't see real image URLs); (3) a vision call gets the downloaded images inline, classifies them, picks the best, reads grain and counts features; (4) `ScaleLadder` decides the final size in code.
 - Eto and Rhino.UI ship inside the RhinoCommon 8 NuGet package, so there is no separate Eto package reference.
 - Build: `dotnet build MaterialAgent.sln` (targets net7.0 + net48, outputs `MaterialAgent.rhp`). Tests: `dotnet test`.
