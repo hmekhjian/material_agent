@@ -155,6 +155,7 @@ namespace MaterialAgent.Tests
         }
     }
 
+    [Collection("DownloadFolder")] // shares the static ImageFetcher.DownloadFolderOverride
     public class ResolverTests : IDisposable
     {
         readonly string _folder = Path.Combine(Path.GetTempPath(), "matagent-tests-" + Guid.NewGuid().ToString("N"));

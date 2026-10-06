@@ -13,6 +13,7 @@ using Xunit;
 
 namespace MaterialAgent.Tests
 {
+    [Collection("DownloadFolder")] // shares the static ImageFetcher.DownloadFolderOverride
     public class WebpTests : IDisposable
     {
         readonly string _folder = Path.Combine(Path.GetTempPath(), "matagent-webp-" + Guid.NewGuid().ToString("N"));
