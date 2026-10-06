@@ -32,6 +32,9 @@ Default model is `gemini-flash-latest` (change it in the Settings tab; `gemini-f
 ## Credits
 RAL colour values: [ral-colors](https://github.com/ieskudero/ral-colors) by Ibon Eskudero (MIT), see `src/MaterialAgent/Core/Colors/RalData.LICENSE.txt`. RAL is a trademark of RAL gGmbH; this plug-in is not affiliated with RAL.
 
+## Download (no .NET needed)
+A pre-built package is in [`dist/`](dist/): `MaterialAgent-0.1.0-rhino8.zip`. On Windows, unblock the zip first (right-click > Properties > Unblock), extract it, then drag `MaterialAgent/MaterialAgent.rhp` onto Rhino 8 and run `MatAgent`. `INSTALL.txt` inside has the details.
+
 ## Build
 Requires the .NET 8 SDK (builds on Windows, macOS or Linux).
 
