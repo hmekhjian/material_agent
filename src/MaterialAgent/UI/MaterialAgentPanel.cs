@@ -80,7 +80,7 @@ namespace MaterialAgent.UI
         readonly DropDown _grainDrop = new DropDown();
         readonly CheckBox _rotateCheck = new CheckBox { Text = "Rotate 90°" };
         readonly DropDown _finishDrop = new DropDown();
-        readonly CheckBox _enscapeCheck = new CheckBox { Text = "Create as Enscape material", ToolTip = "Converts the material to Enscape's type so it shows in the Enscape Material Editor." };
+        readonly CheckBox _enscapeCheck = new CheckBox { Text = "Create as Enscape material", ToolTip = "Enscape already renders the standard material. Tick this only if you want to edit it in the Enscape Material Editor: it converts the material to Enscape's type (experimental)." };
         readonly Label _enscapeNote = new Label { TextColor = Colors.Gray, Wrap = WrapMode.Word };
         readonly CheckBox _mapsCheck = new CheckBox { Text = "Generate normal + roughness maps", Checked = true, ToolTip = "Approximated from the image; product pages rarely provide real PBR maps." };
 

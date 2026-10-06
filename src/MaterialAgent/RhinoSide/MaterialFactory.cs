@@ -98,7 +98,7 @@ namespace MaterialAgent.RhinoSide
             if (maps != null)
             {
                 pbr.SetTexture(BitmapTexture(maps.RoughnessPath), TextureType.PBR_Roughness);
-                // Rhino reads a normal map placed in the bump slot. TODO verify in Rhino that it is detected as a normal map.
+                // The PBR bump slot takes either a bump or a normal map; Rhino detects which (OpenGL-style normals, as generated).
                 pbr.SetTexture(BitmapTexture(maps.NormalPath), TextureType.Bump);
             }
 

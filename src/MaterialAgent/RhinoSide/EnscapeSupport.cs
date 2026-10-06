@@ -12,8 +12,11 @@ namespace MaterialAgent.RhinoSide
     /// find the Enscape material type among the render content types registered with Rhino, then use the
     /// same "Change Type, copy similar settings" conversion Rhino's material editor offers
     /// (Rhino.Render.Utilities.ChangeContentType with parameter harvesting).
-    /// TODO verify in Rhino with Enscape installed: which settings survive harvesting (base colour texture,
-    /// roughness, the normal map in the bump slot) and that Enscape uses the object texture mapping as-is.
+    /// Per Enscape's docs/forum: Enscape renders Rhino PBR materials as they are (albedo, normal/bump, roughness
+    /// value), uses Rhino's texture mapping, and applies its own texture scale on top (leave it at 1). Converting
+    /// is only needed to edit the material in Enscape's editor. Enscape has no public API for materials.
+    /// TODO verify in Rhino with Enscape installed: detection, and which settings survive harvesting
+    /// (the docs don't say; Enscape's "Use Albedo" etc. suggest the albedo texture carries over).
     /// </summary>
     public static class EnscapeSupport
     {
