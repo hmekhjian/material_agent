@@ -80,7 +80,8 @@ Optional additions (implemented): `scale.feature` `{ "name", "real_mm", "count_a
 - Target Rhino 8: multi-target `net7.0` + `net48` (Windows/Mac). RhinoCommon and Eto via NuGet with `ExcludeAssets="runtime"`.
 - Keep Rhino-dependent code (material creation, mapping) and UI separate from the agent/HTTP layer so the agent logic is unit-testable without Rhino.
 - Agent provider: Gemini (`gemini-flash-latest` by default, configurable in the panel). Chosen over Claude/Qwen for cost: Flash is cheap, multimodal, and search + page fetching are built into the API, so no separate search API is needed.
-- API key from the `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) env var or Rhino settings. Never commit keys.
+- API key entered in the panel's Settings tab (stored in Rhino plug-in settings); `GEMINI_API_KEY` / `GOOGLE_API_KEY` env var only as a fallback when nothing is saved. Never commit keys.
+- WebP is converted at download time with SixLabors.ImageSharp 2.1.x (Apache-2.0; 3.x dropped .NET Framework and changed licence). Lossy → JPEG, lossless/alpha → PNG.
 - Units: tile sizes in mm, converted to model units.
 - Don't write RhinoCommon or Eto API calls from memory without checking them; build and test in Rhino as you go.
 - License: MIT.
@@ -88,7 +89,7 @@ Optional additions (implemented): `scale.feature` `{ "name", "real_mm", "count_a
 ## Code layout
 - `src/MaterialAgent/Core/`: no Rhino dependency. Unit tested in `tests/MaterialAgent.Tests`, which compiles these files directly because RhinoCommon cannot load outside Rhino.
   - `Agent/`: `IMaterialResolver`, `GeminiMaterialResolver` (pipeline below), `GeminiClient` (REST), `Prompts`, `PageImageHarvester`, `JsonText`.
-  - `ScaleLadder` (evidence ladder + keeping size proportional to image pixels), `Provenance`, `ImageFetcher`, `ImageFormat`, `MappingMath`, `Maps/SurfaceMaps` (normal/roughness from albedo).
+  - `WebpConverter`, `ScaleLadder` (evidence ladder + keeping size proportional to image pixels), `Provenance`, `ImageFetcher`, `ImageFormat`, `MappingMath`, `Maps/SurfaceMaps` (normal/roughness from albedo).
 - `src/MaterialAgent/RhinoSide/`: RhinoCommon code (PBR material creation, map baking via Eto bitmaps, mapping, provenance store, reuse lookup, settings). Runs on the UI thread.
 - `src/MaterialAgent/Commands/`: `MatAgent` (opens the panel), `MatAgentRescale` (pick two points + type real length).
 - `src/MaterialAgent/UI/`: the Eto dockable panel.

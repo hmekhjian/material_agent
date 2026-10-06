@@ -99,7 +99,7 @@ namespace MaterialAgent.Core
 
         static int BigEndian32(byte[] d, int o) => (d[o] << 24) | (d[o + 1] << 16) | (d[o + 2] << 8) | d[o + 3];
 
-        /// <summary>Formats Rhino 8 can use as a bitmap texture on every platform.</summary>
+        /// <summary>Formats Rhino 8 can use as a bitmap texture on every platform (WebP is converted first).</summary>
         public static bool IsSupportedTexture(ImageKind kind) =>
             kind == ImageKind.Png || kind == ImageKind.Jpeg || kind == ImageKind.Bmp ||
             kind == ImageKind.Tiff || kind == ImageKind.Gif;

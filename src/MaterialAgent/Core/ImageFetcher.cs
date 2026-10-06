@@ -22,6 +22,8 @@ namespace MaterialAgent.Core
         /// <summary>Pixel size from the file header; 0 if unknown (e.g. TIFF).</summary>
         public int PixelWidth { get; set; }
         public int PixelHeight { get; set; }
+        /// <summary>True if the source was WebP and was converted to <see cref="Kind"/>.</summary>
+        public bool ConvertedFromWebp { get; set; }
 
         /// <summary>Height / width, or 0 if unknown.</summary>
         public double Aspect => PixelWidth > 0 && PixelHeight > 0 ? (double)PixelHeight / PixelWidth : 0;
@@ -94,16 +96,25 @@ namespace MaterialAgent.Core
 
             var kind = ImageFormat.Sniff(bytes);
             if (kind == ImageKind.Unknown)
-                throw new InvalidDataException("That doesn't look like an image (the server may have returned a web page or an error).");
+                throw new InvalidDataException("That doesn't look like an image (the server may have returned a web page, an error, or an unsupported format such as AVIF).");
+
+            bool converted = false;
+            if (kind == ImageKind.Webp)
+            {
+                var webp = bytes;
+                (bytes, kind) = await Task.Run(() => WebpConverter.Convert(webp), ct).ConfigureAwait(false);
+                converted = true;
+            }
             if (!ImageFormat.IsSupportedTexture(kind))
-                throw new NotSupportedException($"{kind} images are not supported yet. Use a PNG or JPEG.");
+                throw new NotSupportedException($"{kind} images are not supported. Use a PNG, JPEG or WebP.");
 
             string localPath;
-            if (remote)
+            if (remote || converted)
             {
                 Directory.CreateDirectory(DownloadFolder);
                 localPath = Path.Combine(DownloadFolder, FileNameFor(source, kind));
-                if (!File.Exists(localPath))
+                // Converted local files are rewritten every time: the source file may have been edited.
+                if (!File.Exists(localPath) || !remote)
                 {
                     var tmp = localPath + ".part";
                     File.WriteAllBytes(tmp, bytes);
@@ -120,6 +131,7 @@ namespace MaterialAgent.Core
             {
                 PixelWidth = pw,
                 PixelHeight = ph,
+                ConvertedFromWebp = converted,
                 Source = source,
                 IsRemote = remote,
                 LocalPath = localPath,
@@ -133,7 +145,7 @@ namespace MaterialAgent.Core
         {
             using (var request = new HttpRequestMessage(HttpMethod.Get, uri))
             {
-                request.Headers.Accept.ParseAdd("image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5");
+                request.Headers.Accept.ParseAdd("image/png,image/jpeg,image/webp,image/*;q=0.8,*/*;q=0.5");
                 using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                 {
                     if (!response.IsSuccessStatusCode)

@@ -185,7 +185,7 @@ namespace MaterialAgent.Tests
             return new FakeHttp()
                 .OnUrl("https://shop.example.com/h1145", System.Text.Encoding.UTF8.GetBytes(html), "text/html")
                 .OnUrl("https://shop.example.com/img/room.jpg", TestImages.Png(400, 300, 90), "image/png")
-                .OnUrl("https://shop.example.com/img/H1145_decor.png", TestImages.Png(800, 400, 160), "image/png")
+                .OnUrl("https://shop.example.com/img/H1145_decor.png", WebpTests.Webp(800, 400, lossless: false), "image/webp") // served as WebP despite the name
                 .OnUrl("https://shop.example.com/img/tiny-h1145.png", TestImages.Png(64, 64), "image/png");
         }
 
@@ -219,6 +219,8 @@ namespace MaterialAgent.Tests
             Assert.Equal(Finish.Textured, r.Finish);
             Assert.True(r.Usage.Total > 0);
             Assert.True(File.Exists(r.Candidates[0].Image.LocalPath));
+            Assert.True(r.Candidates[0].Image.ConvertedFromWebp);
+            Assert.Equal(ImageKind.Jpeg, r.Candidates[0].Image.Kind);
             // The vision call carried both images inline.
             var visionBody = gemini.Requests.Last().body;
             Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(visionBody, "inlineData").Count);

@@ -18,6 +18,8 @@
   <ItemGroup>
     <!-- Pinned to the first Rhino 8 release so the plug-in loads on any Rhino 8 service release. -->
     <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+    <!-- WebP decoding (most product sites serve WebP). 2.1.x: Apache-2.0 and still supports .NET Framework 4.8. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.11" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">

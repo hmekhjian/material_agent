@@ -33,8 +33,11 @@ namespace MaterialAgent.Core.Agent
         {
             _settings = settings ?? new AgentSettings();
             _web = webHttp ?? ImageFetcher.Default;
-            _gemini = new GeminiClient(geminiHttp ?? SharedGeminiHttp.Value, _settings.ApiKey, _settings.Model);
+            _gemini = new GeminiClient(geminiHttp ?? SharedHttp, _settings.ApiKey, _settings.Model);
         }
+
+        /// <summary>Shared HTTP client for Gemini calls.</summary>
+        public static HttpClient SharedHttp => SharedGeminiHttp.Value;
 
         static readonly Lazy<HttpClient> SharedGeminiHttp = new Lazy<HttpClient>(() => new HttpClient { Timeout = TimeSpan.FromMinutes(4) });
 

@@ -2,7 +2,10 @@ using MaterialAgent.Core.Agent;
 
 namespace MaterialAgent.RhinoSide
 {
-    /// <summary>Agent settings persisted in Rhino's plug-in settings. The API key env var always wins.</summary>
+    /// <summary>
+    /// Agent settings persisted in Rhino's plug-in settings (entered in the panel's Settings tab).
+    /// The environment variable is only used when no key has been saved.
+    /// </summary>
     public static class AgentSettingsStore
     {
         const string KeyApiKey = "GeminiApiKey";

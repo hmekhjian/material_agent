@@ -36,7 +36,7 @@ namespace MaterialAgent.Tests
             Assert.Equal(ImageKind.Jpeg, ImageFormat.Sniff(Pad(0xFF, 0xD8, 0xFF, 0xE0)));
             Assert.Equal(ImageKind.Webp, ImageFormat.Sniff(Pad((byte)'R', (byte)'I', (byte)'F', (byte)'F', 0, 0, 0, 0, (byte)'W', (byte)'E', (byte)'B', (byte)'P')));
             Assert.Equal(ImageKind.Unknown, ImageFormat.Sniff(System.Text.Encoding.ASCII.GetBytes("<!DOCTYPE html><html>")));
-            Assert.False(ImageFormat.IsSupportedTexture(ImageKind.Webp));
+            Assert.False(ImageFormat.IsSupportedTexture(ImageKind.Webp)); // converted before use, see WebpTests
         }
 
         [Fact]

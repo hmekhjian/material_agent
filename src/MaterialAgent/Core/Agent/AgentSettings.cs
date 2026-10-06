@@ -20,16 +20,29 @@ namespace MaterialAgent.Core.Agent
         /// <summary>How many candidate images to download and show the vision model.</summary>
         public int MaxCandidates { get; set; } = 6;
 
-        /// <summary>Environment variable first (never stored), then the saved setting.</summary>
+        /// <summary>The key typed into the panel's Settings tab wins; the environment variable is only a fallback.</summary>
         public static string ResolveApiKey(string saved)
         {
-            var env = Environment.GetEnvironmentVariable(EnvApiKey);
-            if (string.IsNullOrWhiteSpace(env)) env = Environment.GetEnvironmentVariable(EnvApiKeyAlt);
-            return !string.IsNullOrWhiteSpace(env) ? env.Trim() : saved?.Trim();
+            if (!string.IsNullOrWhiteSpace(saved)) return saved.Trim();
+            var env = EnvironmentKey;
+            return string.IsNullOrWhiteSpace(env) ? null : env.Trim();
         }
 
-        public static bool ApiKeyFromEnvironment =>
-            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(EnvApiKey)) ||
-            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(EnvApiKeyAlt));
+        public static string EnvironmentKey
+        {
+            get
+            {
+                var env = Environment.GetEnvironmentVariable(EnvApiKey);
+                return string.IsNullOrWhiteSpace(env) ? Environment.GetEnvironmentVariable(EnvApiKeyAlt) : env;
+            }
+        }
+
+        /// <summary>Shows only the start and end of a key, for status text.</summary>
+        public static string Mask(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key)) return "";
+            key = key.Trim();
+            return key.Length <= 8 ? new string('•', key.Length) : key.Substring(0, 4) + "…" + key.Substring(key.Length - 4);
+        }
     }
 }

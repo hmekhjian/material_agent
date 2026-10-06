@@ -124,6 +124,30 @@ namespace MaterialAgent.Core.Agent
             }
         }
 
+        /// <summary>
+        /// Checks the key and model name without spending tokens (GET models/{model}).
+        /// Returns the model's display name.
+        /// </summary>
+        public async Task<string> CheckAsync(CancellationToken ct)
+        {
+            using (var msg = new HttpRequestMessage(HttpMethod.Get, BaseUrl + Uri.EscapeDataString(_model)))
+            {
+                msg.Headers.Add("x-goog-api-key", _apiKey);
+                using (var response = await _http.SendAsync(msg, ct).ConfigureAwait(false))
+                {
+                    var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var status = (int)response.StatusCode;
+                        var hint = status == 404 ? $" (no model called '{_model}')" : status == 400 || status == 401 || status == 403 ? " (check the key)" : "";
+                        throw new GeminiApiException(response.StatusCode, $"Gemini API error {status}{hint}: {ErrorMessage(text)}");
+                    }
+                    try { return JsonNode.Parse(text)?["displayName"]?.GetValue<string>() ?? _model; }
+                    catch (JsonException) { return _model; }
+                }
+            }
+        }
+
         public static JsonObject BuildBody(GeminiRequest r)
         {
             var body = new JsonObject();

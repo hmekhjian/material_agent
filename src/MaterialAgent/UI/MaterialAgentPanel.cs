@@ -90,12 +90,21 @@ namespace MaterialAgent.UI
         readonly Button _measureButton = new Button { Text = "Measure in viewport…", ToolTip = "Pick two points on a feature of known size and type its real length (MatAgentRescale)." };
         readonly Label _status = new Label { Wrap = WrapMode.Word };
 
-        // Settings
+        // Tabs
+        readonly TabControl _tabs = new TabControl();
+        readonly TabPage _materialPage = new TabPage { Text = "Material" };
+        readonly TabPage _settingsPage = new TabPage { Text = "Settings" };
+
+        // Settings tab
         readonly PasswordBox _apiKeyBox = new PasswordBox();
-        readonly TextBox _modelBox = new TextBox();
+        readonly TextBox _apiKeyPlain = new TextBox { Visible = false };
+        readonly CheckBox _showKeyCheck = new CheckBox { Text = "Show key" };
+        readonly TextBox _modelBox = new TextBox { PlaceholderText = AgentSettings.DefaultModel };
         readonly Button _saveSettingsButton = new Button { Text = "Save" };
+        readonly Button _testKeyButton = new Button { Text = "Test key" };
+        readonly Button _clearKeyButton = new Button { Text = "Remove key" };
         readonly Label _keySourceLabel = new Label { TextColor = Colors.Gray, Wrap = WrapMode.Word };
-        readonly Expander _settingsExpander = new Expander { Header = new Label { Text = "Agent settings (Gemini)" } };
+        readonly Label _settingsStatus = new Label { Wrap = WrapMode.Word };
         readonly Expander _manualExpander = new Expander { Header = new Label { Text = "Use your own image" } };
 
         public MaterialAgentPanel(uint documentSerialNumber)
@@ -137,10 +146,19 @@ namespace MaterialAgent.UI
             _remapButton.Click += (s, e) => Remap(quiet: false);
             _measureButton.Click += (s, e) => RhinoApp.RunScript("_MatAgentRescale", false);
             _saveSettingsButton.Click += (s, e) => SaveSettings();
+            _testKeyButton.Click += async (s, e) => await TestKeyAsync();
+            _clearKeyButton.Click += (s, e) => ClearKey();
+            _showKeyCheck.CheckedChanged += (s, e) => ToggleShowKey();
+            _apiKeyBox.TextChanged += (s, e) => { if (!_apiKeyPlain.Visible) _apiKeyPlain.Text = _apiKeyBox.Text; };
+            _apiKeyPlain.TextChanged += (s, e) => { if (_apiKeyPlain.Visible) _apiKeyBox.Text = _apiKeyPlain.Text; };
             _liveTimer.Elapsed += (s, e) => { _liveTimer.Stop(); Remap(quiet: true); };
             MaterialAgentEvents.ScaleChanged += OnExternalScaleChanged;
 
-            Content = new Scrollable { Border = BorderType.None, Content = BuildLayout() };
+            _materialPage.Content = new Scrollable { Border = BorderType.None, Content = BuildLayout() };
+            _settingsPage.Content = new Scrollable { Border = BorderType.None, Content = BuildSettingsPage() };
+            _tabs.Pages.Add(_materialPage);
+            _tabs.Pages.Add(_settingsPage);
+            Content = _tabs;
             LoadSettingsIntoUi();
             UpdateScaleSourceLabel();
         }
@@ -210,21 +228,6 @@ namespace MaterialAgent.UI
             layout.AddRow(_liveCheck);
             layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(new TableCell(_remapButton, true), new TableCell(_measureButton, true)) } });
 
-            var getKey = new LinkButton { Text = "Get a free Gemini API key" };
-            getKey.Click += (s, e) => OpenUrl("https://aistudio.google.com/apikey");
-            _settingsExpander.Content = new TableLayout
-            {
-                Spacing = new Size(6, 4),
-                Padding = new Padding(0, 4),
-                Rows =
-                {
-                    new TableRow(Caption("API key"), new TableCell(_apiKeyBox, true)),
-                    new TableRow(Caption("Model"), new TableCell(_modelBox, true)),
-                    new TableRow(null, new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_saveSettingsButton, getKey, null) } }),
-                    new TableRow(null, _keySourceLabel),
-                },
-            };
-            layout.AddRow(_settingsExpander);
 
             layout.AddRow(new Label
             {
@@ -233,6 +236,43 @@ namespace MaterialAgent.UI
                 Wrap = WrapMode.Word,
                 Font = SystemFonts.Default(SystemFonts.Default().Size - 1),
             });
+            layout.Add(null);
+            return layout;
+        }
+
+        Control BuildSettingsPage()
+        {
+            var getKey = new LinkButton { Text = "Get a free Gemini API key (Google AI Studio)" };
+            getKey.Click += (s, e) => OpenUrl("https://aistudio.google.com/apikey");
+
+            var layout = new DynamicLayout { Padding = new Padding(8), DefaultSpacing = new Size(6, 6) };
+            layout.AddRow(Header("Gemini API key"));
+            layout.AddRow(new Label
+            {
+                Text = "The agent uses Google's Gemini to find products. Paste your key here and press Save; it is remembered for next time.",
+                Wrap = WrapMode.Word,
+            });
+            layout.AddRow(getKey);
+            layout.AddRow(new TableLayout
+            {
+                Spacing = new Size(6, 4),
+                Rows =
+                {
+                    new TableRow(Caption("Key"), new TableCell(new StackLayout { Items = { new StackLayoutItem(_apiKeyBox, true), new StackLayoutItem(_apiKeyPlain, true) }, HorizontalContentAlignment = HorizontalAlignment.Stretch }, true)),
+                    new TableRow(null, _showKeyCheck),
+                },
+            });
+            layout.AddRow(Header("Model"));
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 4), Rows = { new TableRow(Caption("Model"), new TableCell(_modelBox, true)) } });
+            layout.AddRow(new Label
+            {
+                Text = $"Default: {AgentSettings.DefaultModel}. For lower cost try gemini-flash-lite-latest (less careful).",
+                TextColor = Colors.Gray,
+                Wrap = WrapMode.Word,
+            });
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_saveSettingsButton, _testKeyButton, _clearKeyButton, null) } });
+            layout.AddRow(_settingsStatus);
+            layout.AddRow(_keySourceLabel);
             layout.Add(null);
             return layout;
         }
@@ -262,8 +302,8 @@ namespace MaterialAgent.UI
             var settings = AgentSettingsStore.Load();
             if (string.IsNullOrWhiteSpace(settings.ApiKey))
             {
-                _settingsExpander.Expanded = true;
-                SetStatus($"Add a Gemini API key in Agent settings below (or set {AgentSettings.EnvApiKey}).", true);
+                _tabs.SelectedPage = _settingsPage;
+                SetSettingsStatus("Paste your Gemini API key here and press Save, then search again.", true);
                 return;
             }
 
@@ -394,7 +434,7 @@ namespace MaterialAgent.UI
                     p.BackgroundColor = i == index ? SystemColors.Highlight : Colors.Transparent;
 
             var dims = c.Image.PixelWidth > 0 ? $"{c.Image.PixelWidth} × {c.Image.PixelHeight} px" : c.Image.Kind.ToString().ToUpperInvariant();
-            _imageInfo.Text = $"{dims} · {Describe(c)}";
+            _imageInfo.Text = $"{dims}{(c.Image.ConvertedFromWebp ? " (converted from WebP)" : "")} · {Describe(c)}";
             _imageInfo.TextColor = c.Kind == "room" || !c.MatchesProduct ? Colors.DarkOrange : SystemColors.ControlText;
 
             // A different picture covers a different area: keep the width, follow its proportions.
@@ -431,7 +471,7 @@ namespace MaterialAgent.UI
         void Browse()
         {
             var dlg = new OpenFileDialog { Title = "Choose a texture image", MultiSelect = false };
-            dlg.Filters.Add(new FileFilter("Images", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif"));
+            dlg.Filters.Add(new FileFilter("Images", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"));
             dlg.Filters.Add(new FileFilter("All files", ".*"));
             if (dlg.ShowDialog(this) == DialogResult.Ok)
             {
@@ -745,18 +785,80 @@ namespace MaterialAgent.UI
         void LoadSettingsIntoUi()
         {
             _apiKeyBox.Text = AgentSettingsStore.SavedApiKey;
+            _apiKeyPlain.Text = _apiKeyBox.Text;
             _modelBox.Text = AgentSettingsStore.SavedModel;
-            _keySourceLabel.Text = AgentSettings.ApiKeyFromEnvironment
-                ? $"Using the key from the {AgentSettings.EnvApiKey} environment variable."
-                : "The key is stored in Rhino's plug-in settings on this computer.";
-            if (string.IsNullOrWhiteSpace(AgentSettings.ResolveApiKey(_apiKeyBox.Text))) _settingsExpander.Expanded = true;
+            UpdateKeySourceLabel();
+            if (string.IsNullOrWhiteSpace(AgentSettings.ResolveApiKey(AgentSettingsStore.SavedApiKey)))
+            {
+                _tabs.SelectedPage = _settingsPage;
+                SetSettingsStatus("No API key yet. Paste one above and press Save.", true);
+            }
+        }
+
+        void UpdateKeySourceLabel()
+        {
+            var saved = AgentSettingsStore.SavedApiKey;
+            if (!string.IsNullOrWhiteSpace(saved))
+                _keySourceLabel.Text = $"Using the saved key {AgentSettings.Mask(saved)}. It is stored in Rhino's plug-in settings on this computer (plain text, like other Rhino settings).";
+            else if (!string.IsNullOrWhiteSpace(AgentSettings.EnvironmentKey))
+                _keySourceLabel.Text = $"No saved key; using the {AgentSettings.EnvApiKey} environment variable.";
+            else
+                _keySourceLabel.Text = "";
+        }
+
+        string TypedKey => (_apiKeyPlain.Visible ? _apiKeyPlain.Text : _apiKeyBox.Text)?.Trim() ?? "";
+
+        void ToggleShowKey()
+        {
+            bool show = _showKeyCheck.Checked == true;
+            if (show) _apiKeyPlain.Text = _apiKeyBox.Text; else _apiKeyBox.Text = _apiKeyPlain.Text;
+            _apiKeyPlain.Visible = show;
+            _apiKeyBox.Visible = !show;
         }
 
         void SaveSettings()
         {
-            AgentSettingsStore.Save(_apiKeyBox.Text, _modelBox.Text);
-            LoadSettingsIntoUi();
-            SetStatus("Settings saved.");
+            AgentSettingsStore.Save(TypedKey, _modelBox.Text);
+            UpdateKeySourceLabel();
+            SetSettingsStatus(string.IsNullOrEmpty(TypedKey) ? "Saved (no key)." : "Saved. Press Test key to check it.");
+        }
+
+        void ClearKey()
+        {
+            _apiKeyBox.Text = "";
+            _apiKeyPlain.Text = "";
+            AgentSettingsStore.Save("", _modelBox.Text);
+            UpdateKeySourceLabel();
+            SetSettingsStatus("Key removed.");
+        }
+
+        async Task TestKeyAsync()
+        {
+            var key = AgentSettings.ResolveApiKey(TypedKey);
+            if (string.IsNullOrWhiteSpace(key)) { SetSettingsStatus("Paste a key first.", true); return; }
+            var model = string.IsNullOrWhiteSpace(_modelBox.Text) ? AgentSettings.DefaultModel : _modelBox.Text.Trim();
+            _testKeyButton.Enabled = false;
+            SetSettingsStatus("Checking…");
+            try
+            {
+                var client = new GeminiClient(GeminiMaterialResolver.SharedHttp, key, model);
+                var name = await Task.Run(() => client.CheckAsync(CancellationToken.None));
+                OnUi(() => SetSettingsStatus($"Key works. Model: {name}." + (TypedKey != AgentSettingsStore.SavedApiKey ? " Press Save to keep it." : "")));
+            }
+            catch (Exception ex)
+            {
+                OnUi(() => SetSettingsStatus(ex.Message, true));
+            }
+            finally
+            {
+                OnUi(() => _testKeyButton.Enabled = true);
+            }
+        }
+
+        void SetSettingsStatus(string text, bool error = false)
+        {
+            _settingsStatus.Text = text;
+            _settingsStatus.TextColor = error ? Colors.Red : Colors.Green;
         }
 
         // ================================================================ helpers
