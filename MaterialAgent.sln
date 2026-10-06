@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{12C7F1E4-E3DA-42D8-AB91-97A7C7886336}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MaterialAgent", "src\MaterialAgent\MaterialAgent.csproj", "{53A0A028-583D-4016-8A94-D06EFA84B0D9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{5D3CB202-3099-4502-8183-2ED088876787}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MaterialAgent.Tests", "tests\MaterialAgent.Tests\MaterialAgent.Tests.csproj", "{C161DFA5-B908-400F-A5F8-B2AC15BEA037}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{53A0A028-583D-4016-8A94-D06EFA84B0D9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{53A0A028-583D-4016-8A94-D06EFA84B0D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{53A0A028-583D-4016-8A94-D06EFA84B0D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{53A0A028-583D-4016-8A94-D06EFA84B0D9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C161DFA5-B908-400F-A5F8-B2AC15BEA037}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C161DFA5-B908-400F-A5F8-B2AC15BEA037}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C161DFA5-B908-400F-A5F8-B2AC15BEA037}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C161DFA5-B908-400F-A5F8-B2AC15BEA037}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{53A0A028-583D-4016-8A94-D06EFA84B0D9} = {12C7F1E4-E3DA-42D8-AB91-97A7C7886336}
+		{C161DFA5-B908-400F-A5F8-B2AC15BEA037} = {5D3CB202-3099-4502-8183-2ED088876787}
+	EndGlobalSection
+EndGlobal
