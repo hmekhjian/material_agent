@@ -11,6 +11,10 @@ Rhino 8 plugin that turns a real product name into an applied, correctly scaled 
 
 You can skip the agent with **Use your own image** (URL or file).
 
+**Pattern tab (brickwork, tiles, planks):** like Architextures' Create tool, but with the real product. Take the Material tab's image (or load one), choose a pattern (stretcher, third or quarter bond, stack, Flemish, English, header, basketweave, herringbone), unit size (prefilled from the product page for bricks), joint width, colour and depth, and variation. Units are filled with crops of the product texture at true scale (planks keep real grain) or with colours from the product photo (bricks; click a colour to leave it out). **Use this texture** sends it to the Material tab with its exact size and joint relief maps, ready to import.
+
+**RAL tab:** a swatch grid of the built-in colours (filter by code or name), with finish and import. Typing a RAL code in the Material search jumps there.
+
 **RAL colours (built in, offline, free):** type `RAL 9010`, `ral7016`, `RAL 210 50 15` (RAL Design), or a name such as `RAL anthracite grey`, and press **Find**. No web search or API key is used. You get a plain-colour material with the chosen finish (Satin by default for RAL Classic, Matt for RAL Design); pearl and aluminium colours (e.g. RAL 9006, 1035) get some metalness, and fluorescent ones (e.g. RAL 2005) are flagged because screens can't show them. Name searches that match several colours offer the others in a drop-down. All 215 RAL Classic and 1,825 RAL Design colours are included; values are sRGB screen approximations of the physical samples, so check a real RAL fan for colour-critical work.
 
 **Import to layer…** sets the material on the layers you pick (Rhino's layer material), so everything on them using the layer material gets it, including objects you draw there later. Textured materials get real-world mapping on the current objects, and new objects added to (or moved onto) those layers are mapped automatically. Objects with their own object material keep it; the status line says how many.

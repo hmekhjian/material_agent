@@ -23,6 +23,15 @@ namespace MaterialAgent.Core.Agent
         public string Note { get; set; }
         /// <summary>True if found by reading the product page's HTML rather than suggested by the model.</summary>
         public bool FromPage { get; set; }
+        /// <summary>Normal/roughness maps made with the image (patterns know their exact joint relief); null = derive on import.</summary>
+        public SurfaceMapFiles Maps { get; set; }
+    }
+
+    /// <summary>Paths of normal and roughness map files that belong to a texture.</summary>
+    public sealed class SurfaceMapFiles
+    {
+        public string NormalPath { get; set; }
+        public string RoughnessPath { get; set; }
     }
 
     public sealed class ResolveResult

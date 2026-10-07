@@ -42,7 +42,12 @@ namespace MaterialAgent.RhinoSide
 
             // Bake maps before the undo record: it's file work, not document work.
             BakedMaps maps = null;
-            if (reuse == null && settings.GenerateMaps && settings.SolidColor == null)
+            if (reuse == null && settings.GenerateMaps && settings.SolidColor == null && settings.PrebakedMaps != null)
+            {
+                maps = new BakedMaps { NormalPath = settings.PrebakedMaps.NormalPath, RoughnessPath = settings.PrebakedMaps.RoughnessPath };
+                result.MapsGenerated = true;
+            }
+            else if (reuse == null && settings.GenerateMaps && settings.SolidColor == null)
             {
                 try { maps = MapBaker.Bake(settings.Image, settings.Finish); result.MapsGenerated = true; }
                 catch (Exception ex) { result.MapError = ex.Message; }

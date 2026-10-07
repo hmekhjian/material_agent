@@ -15,6 +15,8 @@ namespace MaterialAgent.RhinoSide
         public Finish Finish { get; set; } = Finish.Matt;
         /// <summary>Derive normal and roughness maps from the albedo.</summary>
         public bool GenerateMaps { get; set; }
+        /// <summary>Ready-made maps (e.g. from the pattern generator); used instead of deriving them when maps are on.</summary>
+        public Core.Agent.SurfaceMapFiles PrebakedMaps { get; set; }
         /// <summary>Convert to Enscape's material type so it shows in the Enscape Material Editor.</summary>
         public bool AsEnscape { get; set; }
     }

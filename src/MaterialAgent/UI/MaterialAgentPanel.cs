@@ -96,9 +96,6 @@ namespace MaterialAgent.UI
         readonly Button _importButton = new Button { Text = "Import to selection", Enabled = false };
         readonly Button _importLayerButton = new Button { Text = "Import to layer…", Enabled = false, ToolTip = "Sets the material on chosen layers, so objects drawn there later get it too (with real-world mapping)." };
 
-        // RAL colours (built in)
-        RalColor _ralColor;
-        readonly DropDown _ralAlternatives = new DropDown { Visible = false, ToolTip = "Other colours matching your search" };
         Control _scaleSection, _mappingSection;
         readonly CheckBox _liveCheck = new CheckBox { Text = "Live: update selected objects while editing scale/mapping" };
         readonly Button _remapButton = new Button { Text = "Re-apply to selection", ToolTip = "Update the texture mapping of the selected objects without creating a new material." };
@@ -109,6 +106,10 @@ namespace MaterialAgent.UI
         readonly TabControl _tabs = new TabControl();
         readonly TabPage _materialPage = new TabPage { Text = "Material" };
         readonly TabPage _settingsPage = new TabPage { Text = "Settings" };
+        readonly TabPage _patternTab = new TabPage { Text = "Pattern" };
+        readonly TabPage _ralTab = new TabPage { Text = "RAL" };
+        PatternPage _patternPage;
+        RalPage _ralPage;
 
         // Settings tab
         readonly PasswordBox _apiKeyBox = new PasswordBox();
@@ -173,11 +174,6 @@ namespace MaterialAgent.UI
             _reuseCheck.CheckedChanged += (s, e) => UpdateButtons();
             _importButton.Click += (s, e) => Import(toLayers: false);
             _importLayerButton.Click += (s, e) => Import(toLayers: true);
-            _ralAlternatives.SelectedIndexChanged += (s, e) =>
-            {
-                if (_ralAlternatives.SelectedIndex > 0 && _ralAlternatives.SelectedValue is ListItem li && li.Tag is RalColor c)
-                    ShowRal(new RalMatch { Color = c }, keepAlternatives: true);
-            };
             _remapButton.Click += (s, e) => Remap(quiet: false);
             _measureButton.Click += (s, e) => RhinoApp.RunScript("_MatAgentRescale", false);
             _saveSettingsButton.Click += (s, e) => SaveSettings();
@@ -204,7 +200,13 @@ namespace MaterialAgent.UI
 
             _materialPage.Content = VerticalScroller(BuildLayout());
             _settingsPage.Content = VerticalScroller(BuildSettingsPage());
+            _patternPage = new PatternPage(this);
+            _ralPage = new RalPage(this);
+            _patternTab.Content = VerticalScroller(_patternPage);
+            _ralTab.Content = VerticalScroller(_ralPage);
             _tabs.Pages.Add(_materialPage);
+            _tabs.Pages.Add(_patternTab);
+            _tabs.Pages.Add(_ralTab);
             _tabs.Pages.Add(_settingsPage);
             Content = _tabs;
             LoadSettingsIntoUi();
@@ -233,7 +235,6 @@ namespace MaterialAgent.UI
             layout.AddRow(_preview);
             layout.AddRow(_candidateScroll);
             layout.AddRow(_imageInfo);
-            layout.AddRow(_ralAlternatives);
             layout.AddRow(_tileHint);
             layout.AddRow(Row(_tiledCheck, Spacer(), _blendButton, _generateButton));
 
@@ -423,14 +424,8 @@ namespace MaterialAgent.UI
             // RAL colours are built in: no web search, no API key, no cost.
             if (RalCatalog.TryMatch(query, out var ral))
             {
-                var inDoc = MaterialReuse.Find(Doc, ral.Color.Code, null);
-                if (inDoc != null && MessageBox.Show(this, $"'{inDoc.Material.Name}' is already in this document.\n\nUse it instead of creating another?",
-                        "Material Agent", MessageBoxButtons.YesNo, MessageBoxType.Question) == DialogResult.Yes)
-                {
-                    ShowExisting(inDoc);
-                    return;
-                }
-                ShowRal(ral, keepAlternatives: false);
+                _ralPage.Show(ral, query);
+                _tabs.SelectedPage = _ralTab;
                 return;
             }
 
@@ -476,8 +471,8 @@ namespace MaterialAgent.UI
 
         void ShowResult(ResolveResult r)
         {
-            LeaveRalMode();
             _result = r;
+            _patternPage.OnNewResult(r);
             var p = r.Resolution.Product;
             _nameBox.Text = p.Name ?? "";
             _codeBox.Text = p.Code ?? "";
@@ -592,7 +587,6 @@ namespace MaterialAgent.UI
         void SelectCandidate(int index)
         {
             if (index < 0 || index >= _candidates.Count) return;
-            LeaveRalMode();
             _selected = index;
             var c = _candidates[index];
             _image = c.Image;
@@ -629,6 +623,7 @@ namespace MaterialAgent.UI
                 : c.Kind == "manual" ? "your image"
                 : c.Kind == "generated" ? "AI-generated"
                 : c.Kind == "blended" ? "edges blended in code"
+                : c.Kind == "pattern" ? "built in the Pattern tab"
                 : "suggested by agent");
             if (!string.IsNullOrWhiteSpace(c.Note)) bits.Add(c.Note);
             return string.Join(" · ", bits);
@@ -639,73 +634,6 @@ namespace MaterialAgent.UI
             if (image?.Bytes == null) return null;
             try { using (var ms = new MemoryStream(image.Bytes)) return new Bitmap(ms); }
             catch { return null; }
-        }
-
-        // ================================================================ RAL colours
-
-        void ShowRal(RalMatch match, bool keepAlternatives)
-        {
-            var c = match.Color;
-            _ralColor = c;
-            _result = null;
-            _image = null;
-            _candidates.Clear();
-            _candidateStrip.Items.Clear();
-            _candidateScroll.Visible = false;
-            _selected = -1;
-            _tileHint.Visible = false;
-
-            _preview.Image = Swatch(c);
-            var system = c.System == RalSystem.Classic ? "RAL Classic" : "RAL Design System";
-            var info = $"{c.Code} {c.Name} · {c.Hex} · built-in {system} colour (screen approximation; check against a physical RAL fan for colour-critical work)";
-            if (c.Special == RalSpecial.Metallic) info += " · pearl/metallic: rendered with some metalness";
-            if (c.Special == RalSpecial.Luminous) info += " · fluorescent: real samples are brighter than any screen can show";
-            _imageInfo.Text = info;
-            _imageInfo.TextColor = c.Special == RalSpecial.Luminous ? Colors.DarkOrange : SystemColors.ControlText;
-
-            _nameBox.Text = c.Name;
-            _codeBox.Text = c.Code;
-            _manufacturerBox.Text = "RAL";
-            _pageUrlBox.Text = "";
-            ShowProductHeader(c.Name, "RAL", c.Code, system + " colour");
-            _finishDrop.SelectedKey = c.System == RalSystem.Classic ? nameof(Finish.Satin) : nameof(Finish.Matt);
-            _scaleSection.Enabled = false;
-            _mappingSection.Enabled = false;
-
-            if (!keepAlternatives)
-            {
-                _ralAlternatives.Items.Clear();
-                if (match.Alternatives.Count > 0)
-                {
-                    _ralAlternatives.Items.Add(new ListItem { Text = $"Other matches ({match.Alternatives.Count})…" });
-                    _ralAlternatives.Items.Add(new ListItem { Text = c.Display, Tag = c });
-                    foreach (var alt in match.Alternatives)
-                        _ralAlternatives.Items.Add(new ListItem { Text = alt.Display, Tag = alt });
-                    _ralAlternatives.SelectedIndex = 0;
-                }
-                _ralAlternatives.Visible = match.Alternatives.Count > 0;
-            }
-
-            RefreshExisting();
-            UpdateButtons();
-            _progressLabel.Text = "";
-            SetStatus($"{c.Display}: choose the finish, then Import to selection or to a layer. No web search needed.");
-        }
-
-        void LeaveRalMode()
-        {
-            if (_ralColor == null) return;
-            _ralColor = null;
-            _ralAlternatives.Visible = false;
-            _scaleSection.Enabled = true;
-            _mappingSection.Enabled = true;
-        }
-
-        static Bitmap Swatch(RalColor c)
-        {
-            var color = Color.FromArgb(c.R, c.G, c.B);
-            const int w = 320, h = 200;
-            return new Bitmap(w, h, PixelFormat.Format32bppRgb, Enumerable.Repeat(color, w * h));
         }
 
         // ================================================================ seamless tools
@@ -728,6 +656,29 @@ namespace MaterialAgent.UI
             }
             bmp.Dispose();
             return tiled;
+        }
+
+        // ---------------------------------------------------------------- for the Pattern and RAL tabs
+
+        internal CandidateImage CurrentCandidate => SelectedCandidate;
+        internal ResolveResult CurrentResult => _result;
+        internal string CurrentProductName => NullIfBlank(_nameBox.Text) ?? NullIfBlank(_codeBox.Text) ?? "";
+        /// <summary>Real width of the selected image (the size fields), mm.</summary>
+        internal double CurrentWidthMm => _image == null ? 0 : _widthMm.Value;
+
+        /// <summary>Puts a pattern built in the Pattern tab into the Material tab, with its exact size, ready to import.</summary>
+        internal void UsePatternTexture(CandidateImage c, ScaleDecision scale, string name)
+        {
+            AddAndSelect(c);
+            ApplyScaleDecision(scale);
+            _mappingDrop.SelectedKey = nameof(MappingKind.Auto);
+            _rotateCheck.Checked = false;
+            _grainDrop.SelectedKey = nameof(GrainAxis.None);
+            _mapsCheck.Checked = true;
+            _nameBox.Text = name;
+            _tiledCheck.Checked = true;
+            _tabs.SelectedPage = _materialPage;
+            SetStatus("Pattern ready at its exact size. Select objects, then Import.");
         }
 
         CandidateImage SelectedCandidate => _selected >= 0 && _selected < _candidates.Count ? _candidates[_selected] : null;
@@ -1005,7 +956,7 @@ namespace MaterialAgent.UI
         {
             bool busy = _cts != null;
             bool reuse = _existing != null && _reuseCheck.Checked == true;
-            bool ready = !busy && (_image != null || _ralColor != null || reuse);
+            bool ready = !busy && (_image != null || reuse);
             _importButton.Enabled = ready;
             _importLayerButton.Enabled = ready;
         }
@@ -1025,39 +976,83 @@ namespace MaterialAgent.UI
 
             RefreshExisting();
             bool reuse = _existing != null && _reuseCheck.Checked == true;
-            var ral = _image == null ? _ralColor : null;
-            if (_image == null && ral == null && !reuse) { SetStatus("Find a product or colour, or load an image first.", true); return; }
+            if (_image == null && !reuse) { SetStatus("Find a product or load an image first.", true); return; }
 
             int[] layers = null;
-            if (toLayers)
-            {
-                if (!Rhino.UI.Dialogs.ShowSelectMultipleLayersDialog(new[] { doc.Layers.CurrentLayerIndex }, "Apply material to layers", false, out layers)
-                    || layers == null || layers.Length == 0)
-                    return;
-            }
+            if (toLayers && !PickLayers(doc, out layers)) return;
 
             var mapping = CurrentMapping();
             var settings = new ImportSettings
             {
                 MaterialName = MaterialName(),
                 Image = _image,
-                SolidColor = ral,
                 Mapping = mapping,
                 Finish = CurrentFinish(),
                 GenerateMaps = _mapsCheck.Checked == true,
+                PrebakedMaps = SelectedCandidate?.Maps,
                 AsEnscape = _enscapeCheck.Enabled && _enscapeCheck.Checked == true,
-                Provenance = _image != null || ral != null ? BuildProvenance(mapping, ral) : null,
+                Provenance = _image != null ? BuildProvenance(mapping) : null,
             };
+            var msg = RunImport(doc, settings, toLayers, reuse ? _existing.Material : null, layers, out bool ok);
+            SetStatus(msg, !ok);
+            if (ok) RefreshExisting();
+        }
 
+        /// <summary>Imports a plain RAL colour material (RAL tab). Reuses an identical colour + finish already in the document.</summary>
+        internal string ImportColor(RalColor c, Finish finish, bool toLayers, out bool ok)
+        {
+            ok = false;
+            var doc = Doc;
+            if (doc == null) return "No active document.";
+            int[] layers = null;
+            if (toLayers && !PickLayers(doc, out layers)) return null;
+
+            var existing = MaterialReuse.Find(doc, c.Code, null);
+            var reuse = existing != null && existing.Provenance.Finish == finish ? existing.Material : null;
+            var settings = new ImportSettings
+            {
+                MaterialName = $"{c.Code} {c.Name}, {finish.ToString().ToLowerInvariant()}",
+                SolidColor = c,
+                Mapping = CurrentMapping(),
+                Finish = finish,
+                AsEnscape = _enscapeCheck.Enabled && _enscapeCheck.Checked == true,
+                Provenance = new Provenance
+                {
+                    ProductCode = c.Code,
+                    ProductName = c.Name,
+                    Manufacturer = "RAL",
+                    ColorHex = c.Hex,
+                    FetchDateUtc = DateTime.UtcNow,
+                    ScaleSource = ScaleSource.User,
+                    ScaleConfidence = ScaleConfidence.High,
+                    Finish = finish,
+                    Category = c.System == RalSystem.Classic ? "RAL Classic colour" : "RAL Design colour",
+                },
+            };
+            return RunImport(doc, settings, toLayers, reuse, layers, out ok);
+        }
+
+        static bool PickLayers(RhinoDoc doc, out int[] layers) =>
+            Rhino.UI.Dialogs.ShowSelectMultipleLayersDialog(new[] { doc.Layers.CurrentLayerIndex }, "Apply material to layers", false, out layers)
+            && layers != null && layers.Length > 0;
+
+        /// <summary>Creates or reuses the material, assigns it, and describes what happened.</summary>
+        string RunImport(RhinoDoc doc, ImportSettings settings, bool toLayers, Rhino.Render.RenderMaterial reuse, int[] layers, out bool ok)
+        {
+            ok = false;
             try
             {
+                var mapping = settings.Mapping;
                 var targets = toLayers ? new List<RhinoObject>() : SelectedTargets(doc);
-                var result = MaterialFactory.Import(doc, settings, targets, reuse ? _existing.Material : null, layers);
-                MaterialAgentEvents.LastMapping = mapping;
-                if (result.Reused) UpdateProvenanceOf(doc, new[] { result.Material }, mapping);
+                var result = MaterialFactory.Import(doc, settings, targets, reuse, layers);
+                bool solid = settings.SolidColor != null || ProvenanceStore.Read(doc, result.Material)?.IsSolidColor == true;
+                if (!solid)
+                {
+                    MaterialAgentEvents.LastMapping = mapping;
+                    if (result.Reused) UpdateProvenanceOf(doc, new[] { result.Material }, mapping);
+                }
 
                 var verb = result.Reused ? "Reused" : "Created";
-                bool solid = ral != null || ProvenanceStore.Read(doc, result.Material)?.IsSolidColor == true;
                 var scaleText = solid ? "" : $" at {mapping.WidthMm:0.#} × {mapping.HeightMm:0.#} mm";
                 string msg;
                 if (toLayers)
@@ -1076,16 +1071,16 @@ namespace MaterialAgent.UI
                 if (result.MapError != null) msg += "\nMaps were not generated: " + result.MapError;
                 if (result.IsEnscape) msg += "\nCreated as an Enscape material: open the Enscape Material Editor to fine-tune it.";
                 if (result.EnscapeWarning != null) msg += "\n" + result.EnscapeWarning;
-                SetStatus(msg);
-                RefreshExisting();
+                ok = true;
+                return msg;
             }
             catch (Exception ex)
             {
-                SetStatus("Import failed: " + ex.Message, true);
+                return "Import failed: " + ex.Message;
             }
         }
 
-        Provenance BuildProvenance(MappingSettings mapping, RalColor ral) => new Provenance
+        Provenance BuildProvenance(MappingSettings mapping) => new Provenance
         {
             ProductCode = NullIfBlank(_codeBox.Text),
             ProductName = NullIfBlank(_nameBox.Text),
@@ -1093,16 +1088,15 @@ namespace MaterialAgent.UI
             PageUrl = NullIfBlank(_pageUrlBox.Text),
             ImageUrl = _image?.Source,
             FetchDateUtc = _image?.FetchedUtc ?? DateTime.UtcNow,
-            ColorHex = ral?.Hex,
-            ScaleSource = ral != null ? ScaleSource.User : _scaleSource,
-            ScaleConfidence = ral != null ? ScaleConfidence.High : _scaleConfidence,
-            WidthMm = ral != null ? 0 : mapping.WidthMm,
-            HeightMm = ral != null ? 0 : mapping.HeightMm,
+            ScaleSource = _scaleSource,
+            ScaleConfidence = _scaleConfidence,
+            WidthMm = mapping.WidthMm,
+            HeightMm = mapping.HeightMm,
             Mapping = mapping.Kind,
             Grain = mapping.Grain,
             Rotate90 = mapping.Rotate90,
             Finish = CurrentFinish(),
-            Category = ral != null ? (ral.System == RalSystem.Classic ? "RAL Classic colour" : "RAL Design colour") : _result?.Category,
+            Category = _result?.Category,
         };
 
         void QueueLive()
