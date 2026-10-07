@@ -275,6 +275,46 @@ namespace MaterialAgent.Tests
         }
 
         [Fact]
+        public async Task TraceRecordsEveryStepAndTheLogKeepsIt()
+        {
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(Gemini(Locate, Analysis)), new HttpClient(Web()));
+            await resolver.ResolveAsync("Egger H1145 ST10", null, CancellationToken.None);
+            var t = resolver.LastTrace.ToString();
+            Assert.Contains("Search \"Egger H1145 ST10\"", t);
+            Assert.Contains("gemini-flash-lite-latest: HTTP 200", t);       // locate call, with timing and tokens
+            Assert.Contains("gemini-flash-latest: HTTP 200", t);            // analysis call
+            Assert.Contains("tokens prompt", t);
+            Assert.Contains("Page https://shop.example.com/h1145:", t);
+            Assert.Contains("failed", t);                                   // the unreachable dealer page
+            Assert.Contains("too small: skipped", t);                        // the 64 px thumbnail
+            Assert.Contains("Done in", t);
+
+            var log = Path.Combine(_folder, "search.log");
+            SearchLog.PathOverride = log;
+            try
+            {
+                SearchLog.Append(resolver.LastTrace);
+                Assert.Contains("Done in", SearchLog.Read());
+                SearchLog.Clear();
+                Assert.Equal("", SearchLog.Read());
+            }
+            finally { SearchLog.PathOverride = null; }
+        }
+
+        [Fact]
+        public async Task TraceExplainsFailures()
+        {
+            var gemini = new FakeHttp().On(r => true, (r, b) => FakeHttp.Json("{\"error\":{\"message\":\"Quota exceeded\"}}", (HttpStatusCode)429));
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test", LocateModel = "gemini-flash-latest" }, new HttpClient(gemini), new HttpClient(Web()));
+            await Assert.ThrowsAsync<GeminiApiException>(() => resolver.ResolveAsync("H1145", null, CancellationToken.None));
+            var t = resolver.LastTrace.ToString();
+            Assert.Contains("HTTP 429", t);
+            Assert.Contains("retrying in 2s", t);
+            Assert.Contains("FAILED after", t);
+            Assert.Contains("Quota exceeded", t);
+        }
+
+        [Fact]
         public async Task RepeatSearchComesFromCache()
         {
             var gemini = Gemini(Locate, Analysis);

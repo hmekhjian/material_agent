@@ -57,41 +57,79 @@ namespace MaterialAgent.Core.Agent
 
         public static void ClearCache() => Cache.Clear();
 
+        /// <summary>Trace of the last <see cref="ResolveAsync"/> call (also after a failure), for the search log.</summary>
+        public SearchTrace LastTrace { get; private set; }
+
         public async Task<ResolveResult> ResolveAsync(string query, IProgress<string> progress, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("Enter a product name or code.");
+            var trace = LastTrace = new SearchTrace(query.Trim(), _gemini.Model, _locator.Model);
+            _gemini.Log = _locator.Log = trace.Add;
             var key = _gemini.Model + "|" + Provenance.NormalizeCode(query);
             if (Cache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.at < CacheLifetime)
             {
                 hit.result.FromCache = true;
+                trace.Add("Answered from this session's cache (no model calls).");
                 return hit.result;
             }
+            try
+            {
+                var r = await ResolveUncachedAsync(query, progress, trace, ct).ConfigureAwait(false);
+                Cache[key] = (DateTime.UtcNow, r);
+                trace.Add($"Done in {trace.Elapsed.TotalSeconds:0.0}s: {r.Candidates.Count} texture(s), {r.References.Count} reference(s), {r.ModelCalls} model call(s), ~{r.Usage.Total} tokens. Scale {r.Scale?.WidthMm:0} x {r.Scale?.HeightMm:0} mm ({r.Scale?.Source}, {r.Scale?.Confidence}).");
+                foreach (var w in r.Warnings) trace.Add("Warning: " + w);
+                return r;
+            }
+            catch (OperationCanceledException)
+            {
+                trace.Add($"Cancelled after {trace.Elapsed.TotalSeconds:0.0}s.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                trace.Add($"FAILED after {trace.Elapsed.TotalSeconds:0.0}s: {ex.GetType().Name}: {ex.Message}");
+                throw;
+            }
+        }
 
+        async Task<ResolveResult> ResolveUncachedAsync(string query, IProgress<string> progress, SearchTrace trace, CancellationToken ct)
+        {
             var result = new ResolveResult { Query = query.Trim() };
             var clock = System.Diagnostics.Stopwatch.StartNew();
 
             // 1. Locate.
             progress?.Report("Finding the product page…");
+            trace.Add("1. Finding the product page (search-only call)…");
             var located = await LocateAsync(query, result, ct).ConfigureAwait(false);
             Lap(result, "search", clock);
+            trace.Add($"   Found \"{located.Product.Name}\" ({located.Product.Manufacturer} {located.Product.Code}) at {located.Product.PageUrl}; {located.OtherPages?.Count ?? 0} other page(s); category {located.Category}.");
 
             // 2. Read pages and download images (all in parallel).
             progress?.Report("Reading the product pages…");
             var urls = new[] { located.Product.PageUrl }.Concat(located.OtherPages ?? new List<string>())
                 .Where(MaterialResolution.IsHttpUrl).Distinct(StringComparer.OrdinalIgnoreCase).Take(1 + MaxOtherPages).ToList();
-            var pages = (await Task.WhenAll(urls.Select(u => PageReader.FetchAsync(_web, u, ct))).ConfigureAwait(false)).ToList();
+            trace.Add($"2. Reading {urls.Count} page(s) and downloading images…");
+            var pages = (await Task.WhenAll(urls.Select(async u =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var page = await PageReader.FetchAsync(_web, u, ct).ConfigureAwait(false);
+                trace.Add(page.Ok
+                    ? $"   Page {u}: {sw.Elapsed.TotalSeconds:0.0}s, {page.Html.Length / 1024} KB HTML, {PageReader.ContentLength(page.Text)} chars of text"
+                    : $"   Page {u}: failed after {sw.Elapsed.TotalSeconds:0.0}s ({page.Error})");
+                return page;
+            })).ConfigureAwait(false)).ToList();
             foreach (var p in pages.Where(p => !p.Ok)) result.Warnings.Add($"Could not read {p.Url}: {p.Error}");
-            await DownloadCandidatesAsync(pages, located.Product, result, ct).ConfigureAwait(false);
+            await DownloadCandidatesAsync(pages, located.Product, result, trace, ct).ConfigureAwait(false);
             Lap(result, "pages", clock);
 
             // 3. Analyse text + images in one call.
             progress?.Report("Analysing the page and images…");
             bool unreadable = pages.Sum(p => PageReader.ContentLength(p.Text)) < ThinPageChars;
+            trace.Add($"3. Analysing page text and {result.Candidates.Count} image(s)" + (unreadable ? " (pages unreadable as HTML: letting Gemini fetch them)" : "") + "…");
             var analysis = await AnalyseAsync(query, located, pages, result, unreadable, ct).ConfigureAwait(false);
             Lap(result, "analysis", clock);
 
             Apply(analysis, located, result);
-            Cache[key] = (DateTime.UtcNow, result);
             return result;
         }
 
@@ -141,6 +179,7 @@ namespace MaterialAgent.Core.Agent
                     else return located;
                 }
                 if (round == 1) throw new InvalidOperationException("Couldn't find a product page: " + problem);
+                LastTrace?.Add("  Page-finding answer unusable (" + problem + "); asking once more.");
                 request.Messages.Add(new GeminiMessage { Role = "model", Parts = { GeminiPart.FromText(response.Text ?? "") } });
                 request.Messages.Add(new GeminiMessage { Role = "user", Parts = { GeminiPart.FromText(Prompts.Repair(problem)) } });
             }
@@ -149,7 +188,7 @@ namespace MaterialAgent.Core.Agent
 
         // ------------------------------------------------------------------ 2. images
 
-        async Task DownloadCandidatesAsync(List<FetchedPage> pages, ProductInfo product, ResolveResult result, CancellationToken ct)
+        async Task DownloadCandidatesAsync(List<FetchedPage> pages, ProductInfo product, ResolveResult result, SearchTrace trace, CancellationToken ct)
         {
             int max = Math.Max(1, _settings.MaxCandidates);
             var code = product.Code ?? product.Name;
@@ -161,17 +200,24 @@ namespace MaterialAgent.Core.Agent
                 foreach (var list in perPage)
                     if (i < list.Count && !urls.Contains(list[i], StringComparer.OrdinalIgnoreCase)) urls.Add(list[i]);
 
+            trace.Add($"   {urls.Take(max * 2).Count()} image URL(s) found on the pages; downloading…");
             var downloaded = await Task.WhenAll(urls.Take(max * 2).Select(async url =>
             {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     var img = await ImageFetcher.FetchAsync(url, _web, ct).ConfigureAwait(false);
                     // Tiny images are thumbnails or icons, useless as textures.
-                    if (img.PixelWidth > 0 && (img.PixelWidth < 200 || img.PixelHeight < 200)) return null;
-                    return new CandidateImage { Url = url, Image = img, FromPage = true };
+                    bool tiny = img.PixelWidth > 0 && (img.PixelWidth < 200 || img.PixelHeight < 200);
+                    trace.Add($"   Image {url}: {sw.Elapsed.TotalSeconds:0.0}s, {img.Bytes.Length / 1024} KB, {img.PixelWidth}x{img.PixelHeight}{(img.ConvertedFromWebp ? " (WebP converted)" : "")}{(tiny ? ", too small: skipped" : "")}");
+                    return tiny ? null : new CandidateImage { Url = url, Image = img, FromPage = true };
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-                catch { return null; }
+                catch (Exception ex)
+                {
+                    trace.Add($"   Image {url}: failed after {sw.Elapsed.TotalSeconds:0.0}s ({ex.Message})");
+                    return null;
+                }
             })).ConfigureAwait(false);
 
             // Drop byte-identical duplicates (same image under two URLs).
@@ -242,6 +288,7 @@ namespace MaterialAgent.Core.Agent
                     }
                 }
                 if (round == 1) throw new InvalidOperationException("The agent's answer was unusable: " + problem);
+                LastTrace?.Add("  Analysis answer unusable (" + problem + "); asking once more.");
                 request.Messages.Add(new GeminiMessage { Role = "model", Parts = { GeminiPart.FromText(response.Text ?? "") } });
                 request.Messages.Add(new GeminiMessage { Role = "user", Parts = { GeminiPart.FromText(Prompts.Repair(problem)) } });
             }
@@ -384,6 +431,7 @@ namespace MaterialAgent.Core.Agent
                     if (_thinkingConfig && msg.Contains("think")) _thinkingConfig = false;
                     else if (_structuredOutput) _structuredOutput = false;
                     else _thinkingConfig = false;
+                    LastTrace?.Add($"  {client.Model} rejected the request; retrying without {(_structuredOutput ? "thinking setting" : "structured output")}.");
                 }
             }
         }

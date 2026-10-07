@@ -120,6 +120,7 @@ namespace MaterialAgent.UI
         readonly Button _saveSettingsButton = new Button { Text = "Save" };
         readonly Button _testKeyButton = new Button { Text = "Test key" };
         readonly Button _clearKeyButton = new Button { Text = "Remove key" };
+        readonly Button _showLogButton = new Button { Text = "Show search log…", ToolTip = "Timings of every step of recent searches, to copy and send for troubleshooting." };
         readonly Label _keySourceLabel = new Label { TextColor = Colors.Gray, Wrap = WrapMode.Word };
         readonly Label _settingsStatus = new Label { Wrap = WrapMode.Word };
         readonly Label _enscapeStatus = new Label { Wrap = WrapMode.Word };
@@ -181,6 +182,7 @@ namespace MaterialAgent.UI
             _busyTimer.Elapsed += (s, e) => { if (_cts != null) ShowBusyText(); };
             _testKeyButton.Click += async (s, e) => await TestKeyAsync();
             _clearKeyButton.Click += (s, e) => ClearKey();
+            _showLogButton.Click += (s, e) => ShowSearchLog();
             _showKeyCheck.CheckedChanged += (s, e) => ToggleShowKey();
             _tiledCheck.CheckedChanged += (s, e) => { if (_selected >= 0 && _selected < _candidates.Count) _preview.Image = PreviewImage(_candidates[_selected].Image); };
             _blendButton.Click += async (s, e) => await BlendEdgesAsync();
@@ -384,6 +386,9 @@ namespace MaterialAgent.UI
             layout.AddRow(_settingsStatus);
             layout.AddRow(_keySourceLabel);
 
+            layout.AddRow(Header("Diagnostics"));
+            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_showLogButton, null) } });
+
             layout.AddRow(Header("Seamless texture generation"));
             layout.AddRow(new TableLayout
             {
@@ -457,9 +462,10 @@ namespace MaterialAgent.UI
             }
 
             var cts = BeginBusy("Asking the agent…");
+            GeminiMaterialResolver resolver = null;
             try
             {
-                var resolver = new GeminiMaterialResolver(settings);
+                resolver = new GeminiMaterialResolver(settings);
                 var progress = new UiProgress(text => { if (cts == _cts) { _busyMessage = text; ShowBusyText(); } });
                 var result = await Task.Run(() => resolver.ResolveAsync(query, progress, cts.Token), cts.Token);
                 OnUi(() => { if (cts == _cts) ShowResult(result); });
@@ -470,10 +476,11 @@ namespace MaterialAgent.UI
             }
             catch (Exception ex)
             {
-                OnUi(() => SetStatus(ex.Message, true));
+                OnUi(() => SetStatus(ex.Message + "\n(Details: Settings → Show search log.)", true));
             }
             finally
             {
+                SearchLog.Append(resolver?.LastTrace);
                 OnUi(() => EndBusy(cts));
             }
         }
@@ -1264,6 +1271,40 @@ namespace MaterialAgent.UI
                 ? "Enscape material type not found. If Enscape is installed, start it once, then press Detect again. If that fails, press List material types and paste Enscape's ID above."
                 : $"Enscape material type: {type.InternalName} ({type.Id}).";
             _enscapeStatus.TextColor = type == null ? Colors.DarkOrange : Colors.Green;
+        }
+
+        void ShowSearchLog()
+        {
+            var text = new TextArea
+            {
+                ReadOnly = true,
+                Wrap = false,
+                Font = Fonts.Monospace(SystemFonts.Default().Size),
+                Text = SearchLog.Read() is string t && t.Length > 0 ? t : "No searches logged yet. Run a search in the Material tab first.",
+            };
+            var dialog = new Dialog { Title = "Material Agent search log", Resizable = true, ClientSize = new Size(820, 520) };
+            var copy = new Button { Text = "Copy all" };
+            var clear = new Button { Text = "Clear log" };
+            var close = new Button { Text = "Close" };
+            var note = new Label { Text = SearchLog.FilePath, TextColor = Colors.Gray };
+            copy.Click += (s, e) => { Clipboard.Instance.Text = text.Text; note.Text = "Copied. Paste it into the chat."; };
+            clear.Click += (s, e) => { SearchLog.Clear(); text.Text = ""; };
+            close.Click += (s, e) => dialog.Close();
+            dialog.DefaultButton = copy;
+            dialog.AbortButton = close;
+            dialog.Content = new TableLayout
+            {
+                Padding = new Padding(8),
+                Spacing = new Size(6, 6),
+                Rows =
+                {
+                    new TableRow(text) { ScaleHeight = true },
+                    new TableRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(new TableCell(note, true), copy, clear, close) } }),
+                },
+            };
+            // Newest searches are at the end.
+            text.CaretIndex = text.Text.Length;
+            dialog.ShowModal(this);
         }
 
         void SetSettingsStatus(string text, bool error = false)

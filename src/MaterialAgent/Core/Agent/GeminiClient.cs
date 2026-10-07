@@ -104,11 +104,15 @@ namespace MaterialAgent.Core.Agent
 
         public string Model => _model;
 
+        /// <summary>Optional diagnostics sink (the search trace): each HTTP attempt, retry and failure.</summary>
+        public Action<string> Log { get; set; }
+
         public async Task<GeminiResponse> GenerateAsync(GeminiRequest request, CancellationToken ct)
         {
             var body = BuildBody(request).ToJsonString();
             for (int attempt = 0; ; attempt++)
             {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 using (var msg = new HttpRequestMessage(HttpMethod.Post, BaseUrl + Uri.EscapeDataString(_model) + ":generateContent"))
                 {
                     msg.Headers.Add("x-goog-api-key", _apiKey);
@@ -117,10 +121,17 @@ namespace MaterialAgent.Core.Agent
                     {
                         var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                         if (response.IsSuccessStatusCode)
-                            return ParseResponse(text);
+                        {
+                            var parsed = ParseResponse(text);
+                            Log?.Invoke($"  {_model}: HTTP 200 in {sw.Elapsed.TotalSeconds:0.0}s, request {body.Length / 1024} KB; tokens prompt {parsed.Usage.PromptTokens}, tool {parsed.Usage.ToolPromptTokens}, thinking {parsed.Usage.ThoughtTokens}, output {parsed.Usage.OutputTokens}; finish {parsed.FinishReason}"
+                                + (parsed.SearchQueries.Count > 0 ? $"; searched: {string.Join(" | ", parsed.SearchQueries)}" : "")
+                                + (parsed.FetchedUrls.Count > 0 ? $"; fetched {parsed.FetchedUrls.Count} URL(s)" : ""));
+                            return parsed;
+                        }
 
                         var status = response.StatusCode;
                         bool retryable = (int)status == 429 || (int)status >= 500;
+                        Log?.Invoke($"  {_model}: HTTP {(int)status} after {sw.Elapsed.TotalSeconds:0.0}s: {ErrorMessage(text)}" + (retryable && attempt < 2 ? $" (retrying in {2 << attempt}s)" : ""));
                         if (retryable && attempt < 2)
                         {
                             await Task.Delay(TimeSpan.FromSeconds(2 << attempt), ct).ConfigureAwait(false);
