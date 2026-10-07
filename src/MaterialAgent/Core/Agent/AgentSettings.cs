@@ -14,11 +14,18 @@ namespace MaterialAgent.Core.Agent
         public const string DefaultImageModel = "gemini-3.1-flash-image";
         public const string DefaultImageSize = "1K";
 
+        /// <summary>
+        /// Model for the page-finding (search-only) step: a simple task, so the faster, cheaper Flash-Lite.
+        /// Falls back to <see cref="Model"/> if it fails.
+        /// </summary>
+        public const string DefaultLocateModel = "gemini-flash-lite-latest";
+
         public const string EnvApiKey = "GEMINI_API_KEY";
         public const string EnvApiKeyAlt = "GOOGLE_API_KEY";
 
         public string ApiKey { get; set; }
         public string Model { get; set; } = DefaultModel;
+        public string LocateModel { get; set; } = DefaultLocateModel;
         /// <summary>Gemini thinking level (minimal|low|medium|high), or empty to use the model default.</summary>
         public string ThinkingLevel { get; set; } = "low";
         /// <summary>How many candidate images to download and show the vision model.</summary>

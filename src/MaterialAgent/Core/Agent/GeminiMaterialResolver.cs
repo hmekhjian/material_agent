@@ -34,6 +34,7 @@ namespace MaterialAgent.Core.Agent
             new ConcurrentDictionary<string, (DateTime, ResolveResult)>();
 
         readonly GeminiClient _gemini;
+        GeminiClient _locator;
         readonly HttpClient _web;
         readonly AgentSettings _settings;
         bool _structuredOutput = true;
@@ -44,6 +45,9 @@ namespace MaterialAgent.Core.Agent
             _settings = settings ?? new AgentSettings();
             _web = webHttp ?? ImageFetcher.Default;
             _gemini = new GeminiClient(geminiHttp ?? SharedHttp, _settings.ApiKey, _settings.Model);
+            _locator = string.IsNullOrWhiteSpace(_settings.LocateModel) || _settings.LocateModel.Trim() == _gemini.Model
+                ? _gemini
+                : new GeminiClient(geminiHttp ?? SharedHttp, _settings.ApiKey, _settings.LocateModel);
         }
 
         /// <summary>Shared HTTP client for Gemini calls.</summary>
@@ -113,7 +117,19 @@ namespace MaterialAgent.Core.Agent
 
             for (int round = 0; round < 2; round++)
             {
-                var response = await SendAsync(request, Prompts.LocateSchema(), result, ct, "minimal").ConfigureAwait(false);
+                GeminiResponse response;
+                try
+                {
+                    response = await SendAsync(request, Prompts.LocateSchema(), result, ct, "minimal", _locator).ConfigureAwait(false);
+                }
+                catch (GeminiApiException ex) when (_locator != _gemini && ((int)ex.Status == 400 || (int)ex.Status == 404))
+                {
+                    // The fast model isn't available (or doesn't support search) for this key: use the main model.
+                    result.Warnings.Add($"Page-finding model {_locator.Model} failed ({(int)ex.Status}); used {_gemini.Model}.");
+                    _locator = _gemini;
+                    _structuredOutput = _thinkingConfig = true; // the fast model's failures say nothing about the main model
+                    response = await SendAsync(request, Prompts.LocateSchema(), result, ct, "minimal", _locator).ConfigureAwait(false);
+                }
                 foreach (var s in response.SearchSources)
                     if (!result.Sources.Any(x => x.Value == s.Value)) result.Sources.Add(s);
 
@@ -214,7 +230,7 @@ namespace MaterialAgent.Core.Agent
 
             for (int round = 0; round < 2; round++)
             {
-                var response = await SendAsync(request, Prompts.AnalyseSchema(), result, ct, "low").ConfigureAwait(false);
+                var response = await SendAsync(request, Prompts.AnalyseSchema(), result, ct, "minimal").ConfigureAwait(false);
                 var analysis = Parse<Analysis>(response.Text, out var problem);
                 if (analysis != null)
                 {
@@ -348,15 +364,16 @@ namespace MaterialAgent.Core.Agent
         /// Sends with structured output and a thinking level, falling back without them if the configured model
         /// rejects either (older or lighter models).
         /// </summary>
-        async Task<GeminiResponse> SendAsync(GeminiRequest request, JsonNode schema, ResolveResult result, CancellationToken ct, string thinkingLevel)
+        async Task<GeminiResponse> SendAsync(GeminiRequest request, JsonNode schema, ResolveResult result, CancellationToken ct, string thinkingLevel, GeminiClient client = null)
         {
+            client = client ?? _gemini;
             while (true)
             {
                 request.ResponseSchema = _structuredOutput ? schema : null;
                 request.ThinkingLevel = _thinkingConfig ? thinkingLevel ?? _settings.ThinkingLevel : null;
                 try
                 {
-                    var response = await _gemini.GenerateAsync(request, ct).ConfigureAwait(false);
+                    var response = await client.GenerateAsync(request, ct).ConfigureAwait(false);
                     result.Usage.Add(response.Usage);
                     result.ModelCalls++;
                     return response;

@@ -116,6 +116,7 @@ namespace MaterialAgent.UI
         readonly TextBox _apiKeyPlain = new TextBox { Visible = false };
         readonly CheckBox _showKeyCheck = new CheckBox { Text = "Show key" };
         readonly TextBox _modelBox = new TextBox { PlaceholderText = AgentSettings.DefaultModel };
+        readonly TextBox _locateModelBox = new TextBox { PlaceholderText = AgentSettings.DefaultLocateModel, ToolTip = "Used only to find the product page (a quick search). Falls back to the main model if it fails." };
         readonly Button _saveSettingsButton = new Button { Text = "Save" };
         readonly Button _testKeyButton = new Button { Text = "Test key" };
         readonly Button _clearKeyButton = new Button { Text = "Remove key" };
@@ -364,7 +365,15 @@ namespace MaterialAgent.UI
                 },
             });
             layout.AddRow(Header("Model"));
-            layout.AddRow(new TableLayout { Spacing = new Size(6, 4), Rows = { new TableRow(Caption("Model"), new TableCell(_modelBox, true)) } });
+            layout.AddRow(new TableLayout
+            {
+                Spacing = new Size(6, 4),
+                Rows =
+                {
+                    new TableRow(Caption("Model"), new TableCell(_modelBox, true)),
+                    new TableRow(Caption("Page finding"), new TableCell(_locateModelBox, true)),
+                },
+            });
             layout.AddRow(new Label
             {
                 Text = $"Default: {AgentSettings.DefaultModel}. For lower cost try gemini-flash-lite-latest (less careful).",
@@ -1166,6 +1175,7 @@ namespace MaterialAgent.UI
             _apiKeyBox.Text = AgentSettingsStore.SavedApiKey;
             _apiKeyPlain.Text = _apiKeyBox.Text;
             _modelBox.Text = AgentSettingsStore.SavedModel;
+            _locateModelBox.Text = AgentSettingsStore.LocateModel;
             _imageModelBox.Text = AgentSettingsStore.ImageModel;
             _imageSizeDrop.SelectedKey = AgentSettingsStore.ImageSize == "2K" ? "2K" : "1K";
             _autoGenerateCheck.Checked = AgentSettingsStore.AutoGenerateSeamless;
@@ -1201,6 +1211,7 @@ namespace MaterialAgent.UI
         void SaveSettings()
         {
             AgentSettingsStore.Save(TypedKey, _modelBox.Text);
+            AgentSettingsStore.LocateModel = _locateModelBox.Text;
             AgentSettingsStore.ImageModel = _imageModelBox.Text;
             AgentSettingsStore.ImageSize = _imageSizeDrop.SelectedKey ?? "1K";
             AgentSettingsStore.AutoGenerateSeamless = _autoGenerateCheck.Checked == true;

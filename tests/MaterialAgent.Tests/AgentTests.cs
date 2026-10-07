@@ -249,6 +249,32 @@ namespace MaterialAgent.Tests
         }
 
         [Fact]
+        public async Task FindsThePageWithTheFastModelAndAnalysesWithTheMainOne()
+        {
+            var gemini = Gemini(Locate, Analysis);
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
+            await resolver.ResolveAsync("Egger H1145 ST10", null, CancellationToken.None);
+            Assert.Contains("/models/gemini-flash-lite-latest:generateContent", gemini.Requests[0].url);
+            Assert.Contains("/models/gemini-flash-latest:generateContent", gemini.Requests[1].url);
+            Assert.Contains("\"thinkingLevel\":\"MINIMAL\"", gemini.Requests[1].body);
+        }
+
+        [Fact]
+        public async Task FallsBackToTheMainModelWhenTheFastOneIsUnavailable()
+        {
+            var gemini = new FakeHttp().On(r => true, (r, body) =>
+            {
+                if (r.RequestUri.ToString().Contains("flash-lite"))
+                    return FakeHttp.Json("{\"error\":{\"message\":\"models/gemini-flash-lite-latest is not found\"}}", HttpStatusCode.NotFound);
+                return FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Locate : Analysis));
+            });
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
+            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
+            Assert.Single(r.Candidates);
+            Assert.Contains(r.Warnings, w => w.Contains("flash-lite"));
+        }
+
+        [Fact]
         public async Task RepeatSearchComesFromCache()
         {
             var gemini = Gemini(Locate, Analysis);

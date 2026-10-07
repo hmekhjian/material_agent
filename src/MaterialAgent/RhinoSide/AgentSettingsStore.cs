@@ -12,6 +12,7 @@ namespace MaterialAgent.RhinoSide
         const string KeyModel = "GeminiModel";
         const string KeyEnscape = "CreateEnscapeMaterial";
         const string KeyImageModel = "GeminiImageModel";
+        const string KeyLocateModel = "GeminiLocateModel";
         const string KeyImageSize = "GeminiImageSize";
         const string KeyAutoGenerate = "AutoGenerateSeamless";
         const string KeyEnscapeTypeId = "EnscapeMaterialTypeId";
@@ -20,6 +21,12 @@ namespace MaterialAgent.RhinoSide
 
         public static string SavedApiKey => Settings?.GetString(KeyApiKey, "") ?? "";
         public static string SavedModel => Settings?.GetString(KeyModel, AgentSettings.DefaultModel) ?? AgentSettings.DefaultModel;
+
+        public static string LocateModel
+        {
+            get => Settings?.GetString(KeyLocateModel, AgentSettings.DefaultLocateModel) ?? AgentSettings.DefaultLocateModel;
+            set { var s = Settings; if (s == null) return; s.SetString(KeyLocateModel, string.IsNullOrWhiteSpace(value) ? AgentSettings.DefaultLocateModel : value.Trim()); MaterialAgentPlugin.Instance.SaveSettings(); }
+        }
 
         public static string ImageModel
         {
@@ -67,6 +74,7 @@ namespace MaterialAgent.RhinoSide
         {
             ApiKey = AgentSettings.ResolveApiKey(SavedApiKey),
             Model = string.IsNullOrWhiteSpace(SavedModel) ? AgentSettings.DefaultModel : SavedModel.Trim(),
+            LocateModel = string.IsNullOrWhiteSpace(LocateModel) ? AgentSettings.DefaultLocateModel : LocateModel.Trim(),
             ImageModel = string.IsNullOrWhiteSpace(ImageModel) ? AgentSettings.DefaultImageModel : ImageModel.Trim(),
             ImageSize = ImageSize,
             AutoGenerateSeamless = AutoGenerateSeamless,
