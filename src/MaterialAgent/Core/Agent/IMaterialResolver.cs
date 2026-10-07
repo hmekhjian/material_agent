@@ -29,8 +29,15 @@ namespace MaterialAgent.Core.Agent
     {
         public string Query { get; set; }
         public MaterialResolution Resolution { get; set; }
-        /// <summary>Downloaded candidates, best first.</summary>
+        /// <summary>Downloaded texture candidates (flat swatches/details), best first. Never room or perspective shots.</summary>
         public List<CandidateImage> Candidates { get; set; } = new List<CandidateImage>();
+        /// <summary>
+        /// Room/perspective/other shots that were filtered out. Not shown as textures, but useful as references
+        /// for AI seamless-texture generation when no flat texture exists.
+        /// </summary>
+        public List<CandidateImage> References { get; set; } = new List<CandidateImage>();
+        /// <summary>How long each stage took, for the status line.</summary>
+        public List<KeyValuePair<string, TimeSpan>> Timings { get; set; } = new List<KeyValuePair<string, TimeSpan>>();
         public ScaleDecision Scale { get; set; }
         public GrainAxis Grain { get; set; }
         public MappingKind Mapping { get; set; }

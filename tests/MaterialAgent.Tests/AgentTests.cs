@@ -205,11 +205,14 @@ namespace MaterialAgent.Tests
 
             Assert.Equal(2, geminiCalls);
             Assert.Equal("Natural Halifax Oak", r.Resolution.Product.Name);
-            // The hallucinated URL fails, the tiny thumbnail is dropped, the page images survive.
-            Assert.Equal(2, r.Candidates.Count);
+            // The hallucinated URL fails, the tiny thumbnail is dropped; of the page images only the
+            // texture is offered, the room shot is kept aside as a generation reference.
+            Assert.Single(r.Candidates);
             Assert.Equal("https://shop.example.com/img/H1145_decor.png", r.Candidates[0].Url);
             Assert.Equal("swatch", r.Candidates[0].Kind);
-            Assert.Equal("room", r.Candidates[1].Kind);
+            Assert.Single(r.References);
+            Assert.Equal("room", r.References[0].Kind);
+            Assert.Equal(new[] { "search", "images", "check" }, r.Timings.Select(t => t.Key).ToArray());
             Assert.Contains(r.Warnings, w => w.Contains("hallucinated"));
             // Vision counted 2.5 planks of 200 mm along the height of an 800x400 image.
             Assert.Equal(ScaleSource.ImageFeature, r.Scale.Source);
@@ -228,7 +231,7 @@ namespace MaterialAgent.Tests
         }
 
         [Fact]
-        public async Task VisionPickReordersCandidates()
+        public async Task VisionPickReordersAndDropsWrongProduct()
         {
             const string pickRoom = @"{""images"":[{""index"":0,""kind"":""detail"",""likely_tileable"":false,""matches_product"":false},
  {""index"":1,""kind"":""swatch"",""likely_tileable"":true,""matches_product"":true}],""best_index"":1,""grain_axis"":""vertical"",""feature"":null}";
@@ -236,11 +239,38 @@ namespace MaterialAgent.Tests
             var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
             var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
             Assert.Equal("https://shop.example.com/img/room.jpg", r.Candidates[0].Url);
-            Assert.False(r.Candidates[1].MatchesProduct);
+            Assert.Single(r.Candidates);
+            Assert.False(r.References.Single().MatchesProduct);
             Assert.Equal(GrainAxis.Vertical, r.Grain);
             // No feature: the agent's category prior. 2800x2070 is within 3% of the 400x300 image, so it is kept.
             Assert.Equal(ScaleSource.CategoryPrior, r.Scale.Source);
             Assert.Equal(2070, r.Scale.HeightMm);
+        }
+
+        [Fact]
+        public async Task OnlyRoomShotsGiveNoCandidatesButKeepReferences()
+        {
+            const string allRooms = @"{""images"":[{""index"":0,""kind"":""room"",""likely_tileable"":false,""matches_product"":true},
+ {""index"":1,""kind"":""room"",""likely_tileable"":false,""matches_product"":true}],""best_index"":-1,""grain_axis"":""none"",""feature"":null}";
+            var gemini = new FakeHttp().On(r => true, (r, body) => FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Research : allRooms)));
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
+            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
+            Assert.Empty(r.Candidates);
+            Assert.Equal(2, r.References.Count);
+            Assert.Contains(r.Warnings, w => w.Contains("Only room or perspective photos"));
+            Assert.NotNull(r.Scale); // still a size to generate at
+        }
+
+        [Fact]
+        public void WithoutVisionOnlyAgentRoomLabelsAreFiltered()
+        {
+            var r = new ResolveResult();
+            r.Candidates.Add(new CandidateImage { Url = "a", Kind = "room" });
+            r.Candidates.Add(new CandidateImage { Url = "b", Kind = null, FromPage = true });
+            GeminiMaterialResolver.SplitTexturesFromReferences(r, checkedByVision: false);
+            Assert.Equal("b", r.Candidates.Single().Url);
+            Assert.Equal("a", r.References.Single().Url);
+            Assert.Contains(r.Warnings, w => w.Contains("not checked"));
         }
 
         [Fact]

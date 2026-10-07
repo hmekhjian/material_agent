@@ -78,3 +78,26 @@ namespace MaterialAgent.Tests
         }
     }
 }
+
+namespace MaterialAgent.Tests
+{
+    public class ImagePrepTests
+    {
+        [Fact]
+        public void DownscalesForVision()
+        {
+            var big = TestImages.Png(2000, 1000);
+            var small = MaterialAgent.Core.ImagePrep.ForVision(big);
+            Assert.Equal(MaterialAgent.Core.ImageKind.Jpeg, MaterialAgent.Core.ImageFormat.Sniff(small));
+            Assert.True(MaterialAgent.Core.ImageFormat.TryGetSize(small, out var w, out var h));
+            Assert.Equal((768, 384), (w, h));
+        }
+
+        [Fact]
+        public void KeepsBytesItCannotDecode()
+        {
+            var junk = new byte[] { 1, 2, 3 };
+            Assert.Same(junk, MaterialAgent.Core.ImagePrep.ForVision(junk));
+        }
+    }
+}

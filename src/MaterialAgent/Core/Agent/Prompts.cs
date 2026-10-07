@@ -13,7 +13,8 @@ Use Google Search to find the official product page (prefer the manufacturer's o
 
 Images (""candidates""):
 - Only list image URLs you actually saw in fetched page content or search results. Never invent or guess image URLs. If you saw none, return an empty list: the tool also reads images from page_url itself, so getting page_url right matters most.
-- Rank best first. Prefer, in order: official decor/texture/swatch downloads, flat close-up swatches, detail shots. Room/installation photos last.
+- Rank best first. Prefer, in order: official decor/texture/swatch downloads, flat close-up swatches, detail shots.
+- Do NOT list room, interior, installation, furniture or any perspective/3D-rendered images: only flat images of the material surface itself.
 - kind: ""swatch"" (flat, fills the frame), ""detail"" (close-up but not flat or partly cropped), ""room"" (scene with furniture/perspective).
 - likely_tileable: true only for flat swatches without borders, labels, shadows or perspective.
 

@@ -25,7 +25,7 @@ namespace MaterialAgent.UI
     {
         public static Guid PanelId => typeof(MaterialAgentPanel).GUID;
 
-        const int ThumbSize = 72;
+        const int ThumbSize = 56;
 
         readonly uint _docSerial;
         CancellationTokenSource _cts;
@@ -54,7 +54,7 @@ namespace MaterialAgent.UI
         // Candidates + preview
         readonly StackLayout _candidateStrip = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 4 };
         readonly Scrollable _candidateScroll;
-        readonly ImageView _preview = new ImageView { Size = new Size(-1, 220) };
+        readonly ImageView _preview = new ImageView { Size = new Size(-1, 170) };
         readonly Label _imageInfo = new Label { Text = "No image yet.", TextColor = Colors.Gray, Wrap = WrapMode.Word };
 
         // Seamless tools
@@ -128,6 +128,11 @@ namespace MaterialAgent.UI
         readonly CheckBox _autoGenerateCheck = new CheckBox { Text = "Automatically generate a seamless texture when none is found (costs per image)" };
         readonly Button _enscapeListButton = new Button { Text = "List material types", ToolTip = "Prints every material type and its ID to the Rhino command line." };
         readonly Expander _manualExpander = new Expander { Header = new Label { Text = "Use your own image" } };
+        readonly Expander _detailsExpander = new Expander { Header = new Label { Text = "Details (name, code, product page)" } };
+        readonly Expander _adjustExpander = new Expander { Header = new Label { Text = "Adjust after import" } };
+        readonly UITimer _busyTimer = new UITimer { Interval = 1 };
+        string _busyMessage = "";
+        DateTime _busyStarted;
 
         public MaterialAgentPanel(uint documentSerialNumber)
         {
@@ -174,6 +179,7 @@ namespace MaterialAgent.UI
             _remapButton.Click += (s, e) => Remap(quiet: false);
             _measureButton.Click += (s, e) => RhinoApp.RunScript("_MatAgentRescale", false);
             _saveSettingsButton.Click += (s, e) => SaveSettings();
+            _busyTimer.Elapsed += (s, e) => { if (_cts != null) ShowBusyText(); };
             _testKeyButton.Click += async (s, e) => await TestKeyAsync();
             _clearKeyButton.Click += (s, e) => ClearKey();
             _showKeyCheck.CheckedChanged += (s, e) => ToggleShowKey();
@@ -204,105 +210,115 @@ namespace MaterialAgent.UI
             UpdateScaleSourceLabel();
         }
 
+        // Layout note: never put null in a TableRow unless a stretchy spacer is wanted. Eto treats null cells as
+        // scaled, which splits rows into equal columns and wastes most of the panel's width.
         Control BuildLayout()
         {
-            var layout = new DynamicLayout { Padding = new Padding(8), DefaultSpacing = new Size(6, 6) };
+            var small = SystemFonts.Default(SystemFonts.Default().Size - 1);
+            foreach (var l in new[] { _productSub, _imageInfo, _tileHint, _scaleSourceLabel, _rationaleLabel, _status, _progressLabel, _enscapeNote })
+                l.Font = small;
 
-            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(new TableCell(_specBox, true), _resolveButton, _cancelButton) } });
+            var layout = new DynamicLayout { Padding = new Padding(6), DefaultSpacing = new Size(4, 4) };
+
+            // Search
+            layout.AddRow(Row(Stretch(_specBox), _resolveButton, _cancelButton));
             layout.AddRow(_progress);
             layout.AddRow(_progressLabel);
 
+            // What was found
             layout.AddRow(_productTitle);
-            layout.AddRow(_productSub);
-            layout.AddRow(_pageLink);
+            layout.AddRow(Row(Stretch(_productSub), _pageLink));
             layout.AddRow(_preview);
             layout.AddRow(_candidateScroll);
             layout.AddRow(_imageInfo);
             layout.AddRow(_ralAlternatives);
             layout.AddRow(_tileHint);
-            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_tiledCheck, null, _blendButton, _generateButton) } });
+            layout.AddRow(Row(_tiledCheck, Spacer(), _blendButton, _generateButton));
 
-            _manualExpander.Content = new TableLayout
+            // Size, mapping, surface: label | control pairs, labels sized to their text.
+            var sizeRow = new TableLayout
             {
-                Spacing = new Size(6, 0),
-                Padding = new Padding(0, 4),
-                Rows = { new TableRow(new TableCell(_imageBox, true), _browseButton, _loadButton) },
+                Spacing = new Size(4, 3),
+                Rows =
+                {
+                    new TableRow(Caption("Size"), Stretch(_widthMm), Caption("×"), Stretch(_heightMm), Caption("mm"), _swapButton),
+                },
             };
-            layout.AddRow(_manualExpander);
-
-            layout.AddRow(Header("Details"));
-            layout.AddRow(_nameBox);
-            layout.AddRow(_codeBox);
-            layout.AddRow(_manufacturerBox);
-            layout.AddRow(_pageUrlBox);
-
-            // Scale and mapping only apply to textures; they are disabled for plain colours (RAL).
             _scaleSection = new StackLayout
             {
-                Spacing = 6,
+                Spacing = 2,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Items =
-                {
-                    Header("Real-world repeat size"),
-                    new TableLayout
-                    {
-                        Spacing = new Size(6, 4),
-                        Rows =
-                        {
-                            new TableRow(Caption("Width (mm)"), new TableCell(_widthMm, true), null),
-                            new TableRow(Caption("Height (mm)"), new TableCell(_heightMm, true), _swapButton),
-                            new TableRow(null, _lockAspect, null),
-                        },
-                    },
-                    _scaleSourceLabel,
-                    _rationaleLabel,
-                },
+                Items = { sizeRow, Row(_lockAspect, Stretch(_scaleSourceLabel)), _rationaleLabel },
             };
             layout.AddRow(_scaleSection);
 
-            layout.AddRow(Header("Mapping and surface"));
             _mappingSection = new TableLayout
             {
-                Spacing = new Size(6, 4),
+                Spacing = new Size(4, 3),
                 Rows =
                 {
-                    new TableRow(Caption("Type"), new TableCell(_mappingDrop, true)),
-                    new TableRow(Caption("Grain"), new TableCell(_grainDrop, true)),
-                    new TableRow(null, _rotateCheck),
-                    new TableRow(null, _mapsCheck),
+                    new TableRow(Caption("Mapping"), Stretch(_mappingDrop), Caption("Grain"), Stretch(_grainDrop)),
+                    new TableRow(Caption(""), _rotateCheck, Caption(""), _mapsCheck),
                 },
             };
             layout.AddRow(_mappingSection);
             layout.AddRow(new TableLayout
             {
-                Spacing = new Size(6, 4),
-                Rows =
-                {
-                    new TableRow(Caption("Finish"), new TableCell(_finishDrop, true)),
-                    new TableRow(null, _enscapeCheck),
-                    new TableRow(null, _enscapeNote),
-                },
+                Spacing = new Size(4, 3),
+                Rows = { new TableRow(Caption("Finish"), Stretch(_finishDrop), _enscapeCheck) },
             });
+            layout.AddRow(_enscapeNote);
 
+            // Import
             layout.AddRow(_reuseCheck);
-            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(new TableCell(_importButton, true), new TableCell(_importLayerButton, true)) } });
+            layout.AddRow(Row(Stretch(_importButton), Stretch(_importLayerButton)));
             layout.AddRow(_status);
 
-            layout.AddRow(Header("Adjust after import"));
-            layout.AddRow(_liveCheck);
-            layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(new TableCell(_remapButton, true), new TableCell(_measureButton, true)) } });
-
-
-            layout.AddRow(new Label
+            // Less used: collapsed by default.
+            _detailsExpander.Content = new StackLayout
             {
-                Text = "Images come from third-party sites. Check the site's terms before use. The source URL is stored with the material.",
-                TextColor = Colors.Gray,
-                Wrap = WrapMode.Word,
-                Font = SystemFonts.Default(SystemFonts.Default().Size - 1),
-            });
+                Spacing = 3,
+                Padding = new Padding(0, 3),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Items =
+                {
+                    Row(Stretch(_nameBox), Stretch(_codeBox)),
+                    Row(_manufacturerBox, Stretch(_pageUrlBox)),
+                },
+            };
+            _manufacturerBox.Width = 120;
+            layout.AddRow(_detailsExpander);
+
+            _manualExpander.Content = new TableLayout
+            {
+                Spacing = new Size(4, 0),
+                Padding = new Padding(0, 3),
+                Rows = { new TableRow(Stretch(_imageBox), _browseButton, _loadButton) },
+            };
+            layout.AddRow(_manualExpander);
+
+            _adjustExpander.Content = new StackLayout
+            {
+                Spacing = 3,
+                Padding = new Padding(0, 3),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Items = { _liveCheck, Row(Stretch(_remapButton), Stretch(_measureButton)) },
+            };
+            layout.AddRow(_adjustExpander);
+
             layout.Add(null);
             return layout;
         }
+
+        static TableLayout Row(params TableCell[] cells)
+        {
+            var row = new TableRow();
+            foreach (var c in cells) row.Cells.Add(c);
+            return new TableLayout { Spacing = new Size(4, 0), Rows = { row } };
+        }
+
+        static TableCell Stretch(Control c) => new TableCell(c, true);
+        static TableCell Spacer() => new TableCell(null, true);
 
         Control BuildSettingsPage()
         {
@@ -323,7 +339,7 @@ namespace MaterialAgent.UI
                 Rows =
                 {
                     new TableRow(Caption("Key"), new TableCell(new StackLayout { Items = { new StackLayoutItem(_apiKeyBox, true), new StackLayoutItem(_apiKeyPlain, true) }, HorizontalContentAlignment = HorizontalAlignment.Stretch }, true)),
-                    new TableRow(null, _showKeyCheck),
+                    new TableRow(Caption(""), _showKeyCheck),
                 },
             });
             layout.AddRow(Header("Model"));
@@ -360,6 +376,14 @@ namespace MaterialAgent.UI
             layout.AddRow(_enscapeStatus);
             layout.AddRow(new TableLayout { Spacing = new Size(6, 4), Rows = { new TableRow(Caption("Material type ID"), new TableCell(_enscapeTypeBox, true)) } });
             layout.AddRow(new TableLayout { Spacing = new Size(6, 0), Rows = { new TableRow(_enscapeDetectButton, _enscapeListButton, null) } });
+
+            layout.AddRow(Header("About"));
+            layout.AddRow(new Label
+            {
+                Text = "Images come from third-party sites. Check each site's terms before use. The source URL is stored with every material.",
+                TextColor = Colors.Gray,
+                Wrap = WrapMode.Word,
+            });
             layout.Add(null);
             return layout;
         }
@@ -412,7 +436,7 @@ namespace MaterialAgent.UI
             try
             {
                 var resolver = new GeminiMaterialResolver(settings);
-                var progress = new UiProgress(text => { if (cts == _cts) _progressLabel.Text = text; });
+                var progress = new UiProgress(text => { if (cts == _cts) { _busyMessage = text; ShowBusyText(); } });
                 var result = await Task.Run(() => resolver.ResolveAsync(query, progress, cts.Token), cts.Token);
                 OnUi(() => { if (cts == _cts) ShowResult(result); });
             }
@@ -448,15 +472,28 @@ namespace MaterialAgent.UI
 
             SetCandidates(r.Candidates);
             ApplyScaleDecision(r.Scale);
+            if (r.Candidates.Count == 0)
+            {
+                _image = null;
+                _preview.Image = null;
+                _imageInfo.Text = $"No flat texture found, only {r.References.Count} room/perspective photo(s). Generate seamless (AI) can paint a texture from them, or paste an image URL under Use your own image.";
+                _imageInfo.TextColor = Colors.DarkOrange;
+                _generateButton.Enabled = r.References.Count > 0;
+                UpdateButtons();
+            }
 
             var tokens = r.Usage.Total;
-            var msg = $"Found {r.Candidates.Count} image(s). Check the picture and the size, select objects, then Import. (~{tokens:N0} tokens)";
+            var timing = string.Join(" · ", r.Timings.Select(t => $"{t.Key} {t.Value.TotalSeconds:0}s"));
+            var msg = r.Candidates.Count == 0
+                ? $"Found the product but no usable texture. ({timing}, ~{tokens:N0} tokens)"
+                : $"Found {r.Candidates.Count} texture(s). Check the picture and size, select objects, then Import. ({timing}, ~{tokens:N0} tokens)";
             if (r.Warnings.Count > 0) msg += "\n" + string.Join("\n", r.Warnings.Take(3));
             SetStatus(msg);
             _progressLabel.Text = r.Sources.Count > 0 ? "Sources: " + string.Join(", ", r.Sources.Take(4).Select(s => s.Key)) : "";
             RefreshExisting();
 
             bool anyTileable = r.Candidates.Any(c => c.LikelyTileable && c.MatchesProduct);
+            if (r.Candidates.Count == 0 && r.References.Count == 0) return;
             if (!anyTileable && AgentSettingsStore.AutoGenerateSeamless)
                 Application.Instance.AsyncInvoke(async () => await GenerateSeamlessAsync(automatic: true));
         }
@@ -704,7 +741,8 @@ namespace MaterialAgent.UI
         async Task GenerateSeamlessAsync(bool automatic)
         {
             var selected = SelectedCandidate;
-            if (selected == null) { SetStatus("Find a product or load an image first.", true); return; }
+            var roomShots = _result?.References ?? new List<CandidateImage>();
+            if (selected == null && roomShots.Count == 0) { SetStatus("Find a product or load an image first.", true); return; }
             var settings = AgentSettingsStore.Load();
             if (string.IsNullOrWhiteSpace(settings.ApiKey))
             {
@@ -713,9 +751,12 @@ namespace MaterialAgent.UI
                 return;
             }
 
-            // The selected image first, then other images that look like the product (not earlier generations).
-            var references = new List<CandidateImage> { selected };
+            // References: the selected texture first, then other textures, then room shots (the generator
+            // extracts the surface from them).
+            var references = new List<CandidateImage>();
+            if (selected != null) references.Add(selected);
             references.AddRange(_candidates.Where(c => c != selected && c.MatchesProduct && c.Kind != "generated" && c.Kind != "blended"));
+            references.AddRange(roomShots.Where(c => c.MatchesProduct));
             var product = new ProductInfo { Name = NullIfBlank(_nameBox.Text), Code = NullIfBlank(_codeBox.Text), Manufacturer = NullIfBlank(_manufacturerBox.Text) };
             var basis = new ScaleDecision { WidthMm = _widthMm.Value, HeightMm = _heightMm.Value, Source = _scaleSource, Confidence = _scaleConfidence, Rationale = _rationaleLabel.Text };
             double w = _widthMm.Value, h = _heightMm.Value;
@@ -797,10 +838,19 @@ namespace MaterialAgent.UI
             _browseButton.Enabled = false;
             _blendButton.Enabled = false;
             _generateButton.Enabled = false;
+            _busyMessage = message;
+            _busyStarted = DateTime.Now;
             _progressLabel.Text = message;
+            _busyTimer.Start();
             SetStatus("");
             UpdateButtons();
             return cts;
+        }
+
+        void ShowBusyText()
+        {
+            var secs = (int)(DateTime.Now - _busyStarted).TotalSeconds;
+            _progressLabel.Text = secs > 0 ? $"{_busyMessage} {secs}s" : _busyMessage;
         }
 
         void EndBusy(CancellationTokenSource cts)
@@ -808,6 +858,7 @@ namespace MaterialAgent.UI
             if (cts == _cts)
             {
                 _cts = null;
+                _busyTimer.Stop();
                 _progress.Visible = false;
                 _cancelButton.Visible = false;
                 _resolveButton.Enabled = true;
@@ -815,7 +866,7 @@ namespace MaterialAgent.UI
                 _browseButton.Enabled = true;
                 _blendButton.Enabled = true;
                 _generateButton.Enabled = true;
-                if (_result == null || _progressLabel.Text.EndsWith("…")) _progressLabel.Text = "";
+                if (_result == null || _progressLabel.Text.Contains("…")) _progressLabel.Text = "";
             }
             cts.Dispose();
             UpdateButtons();

@@ -46,34 +46,46 @@ namespace MaterialAgent.Core.Agent
             if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("Enter a product name or code.");
             var result = new ResolveResult { Query = query.Trim() };
 
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
             // 1. Research.
             progress?.Report("Searching the web for the product…");
             var resolution = await ResearchAsync(query, result, ct).ConfigureAwait(false);
             result.Resolution = resolution;
+            Lap(result, "search", clock);
 
             // 2. Download candidates (model-suggested + harvested from the page).
             progress?.Report("Downloading candidate images…");
             await GatherCandidatesAsync(resolution, result, ct).ConfigureAwait(false);
+            Lap(result, "images", clock);
             if (result.Candidates.Count == 0)
                 throw new InvalidOperationException($"Found '{resolution.Product?.Name}' but could not download any usable image. Open the product page and paste an image URL instead.");
 
             // 3. Vision check.
             ScaleFeature visionFeature = null;
             GrainAxis? visionGrain = null;
+            bool checkedByVision = false;
             try
             {
                 progress?.Report("Checking the images…");
                 (visionFeature, visionGrain) = await RankWithVisionAsync(resolution, result, ct).ConfigureAwait(false);
+                checkedByVision = true;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 result.Warnings.Add("Image check skipped: " + ex.Message);
             }
+            Lap(result, "check", clock);
+
+            // Only textures are offered: room, perspective and unrelated shots become references.
+            SplitTexturesFromReferences(result, checkedByVision);
+            if (result.Candidates.Count == 0)
+                result.Warnings.Add("Only room or perspective photos were found, no flat texture. Use Generate seamless (AI) to make one from them, or paste an image URL.");
 
             // 4. Decide.
-            var best = result.Candidates[0];
-            result.Scale = ScaleLadder.Decide(resolution.Scale, visionFeature, best.Image.Aspect);
+            var best = result.Candidates.FirstOrDefault();
+            result.Scale = ScaleLadder.Decide(resolution.Scale, best == null ? null : visionFeature, best?.Image.Aspect ?? 0);
             EnumText.TryParseGrain(resolution.GrainAxis, out var grain);
             result.Grain = visionGrain ?? grain;
             EnumText.TryParseMapping(resolution.Mapping, out var mapping);
@@ -86,6 +98,30 @@ namespace MaterialAgent.Core.Agent
             // Keep the resolution's candidate list in sync with what was actually usable (schema requires it).
             resolution.Candidates = result.Candidates.Select(c => new ImageCandidate { Url = c.Url, Kind = c.Kind, LikelyTileable = c.LikelyTileable, Note = c.Note }).ToList();
             return result;
+        }
+
+        static void Lap(ResolveResult result, string phase, System.Diagnostics.Stopwatch clock)
+        {
+            result.Timings.Add(new KeyValuePair<string, TimeSpan>(phase, clock.Elapsed));
+            clock.Restart();
+        }
+
+        /// <summary>
+        /// Moves anything that isn't a usable texture out of <see cref="ResolveResult.Candidates"/>:
+        /// room/perspective shots, unrelated images and images of a different product. Without a vision check,
+        /// only the research model's own "room" labels can be used.
+        /// </summary>
+        public static void SplitTexturesFromReferences(ResolveResult result, bool checkedByVision)
+        {
+            bool IsTexture(CandidateImage c) =>
+                c.MatchesProduct && c.Kind != "room" && c.Kind != "other";
+
+            var keep = result.Candidates.Where(IsTexture).ToList();
+            result.References.AddRange(result.Candidates.Where(c => !IsTexture(c)));
+            result.Candidates.Clear();
+            result.Candidates.AddRange(keep);
+            if (!checkedByVision && keep.Count > 0)
+                result.Warnings.Add("Images were not checked by the vision model; some may still be room shots.");
         }
 
         // ------------------------------------------------------------------ research
@@ -150,12 +186,12 @@ namespace MaterialAgent.Core.Agent
         /// Sends a request with structured output and thinking config, and falls back without them if the
         /// configured model rejects either (older or lighter models).
         /// </summary>
-        async Task<GeminiResponse> SendAsync(GeminiRequest request, JsonNode schema, ResolveResult result, CancellationToken ct)
+        async Task<GeminiResponse> SendAsync(GeminiRequest request, JsonNode schema, ResolveResult result, CancellationToken ct, string thinkingLevel = null)
         {
             while (true)
             {
                 request.ResponseSchema = _structuredOutput ? schema : null;
-                request.ThinkingLevel = _thinkingConfig ? _settings.ThinkingLevel : null;
+                request.ThinkingLevel = _thinkingConfig ? thinkingLevel ?? _settings.ThinkingLevel : null;
                 try
                 {
                     var response = await _gemini.GenerateAsync(request, ct).ConfigureAwait(false);
@@ -248,12 +284,14 @@ namespace MaterialAgent.Core.Agent
             for (int i = 0; i < sendable.Count; i++)
             {
                 message.Parts.Add(GeminiPart.FromText($"Image {i}:"));
-                message.Parts.Add(GeminiPart.FromImage(sendable[i].Image.Bytes, ImageFormat.MimeType(sendable[i].Image.Kind)));
+                // Downscaled copies: classification doesn't need full resolution, and smaller uploads are faster and cheaper.
+                var small = ImagePrep.ForVision(sendable[i].Image.Bytes);
+                message.Parts.Add(GeminiPart.FromImage(small, ImageFormat.MimeType(ImageFormat.Sniff(small))));
             }
             var request = new GeminiRequest { SystemInstruction = Prompts.VisionSystem, MaxOutputTokens = 2048 };
             request.Messages.Add(message);
 
-            var response = await SendAsync(request, Prompts.VisionSchema(), result, ct).ConfigureAwait(false);
+            var response = await SendAsync(request, Prompts.VisionSchema(), result, ct, thinkingLevel: "minimal").ConfigureAwait(false);
             var json = JsonText.ExtractObject(response.Text);
             if (json == null) throw new InvalidOperationException("no JSON in the image check reply");
             var verdict = JsonSerializer.Deserialize<VisionVerdict>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
