@@ -50,29 +50,52 @@ namespace MaterialAgent.RhinoSide
         {
             try
             {
-                var candidates = new List<TypeInfo>();
-                foreach (var t in RenderContentType.GetAllAvailableTypes() ?? Array.Empty<RenderContentType>())
-                {
-                    var name = t.InternalName ?? "";
-                    if (name.IndexOf("enscape", StringComparison.OrdinalIgnoreCase) >= 0)
-                        candidates.Add(new TypeInfo { Id = t.Id, InternalName = name });
-                }
-                // Prefer types that say "material", then confirm by instantiating a temporary content.
-                foreach (var c in candidates.OrderByDescending(c => c.InternalName.IndexOf("material", StringComparison.OrdinalIgnoreCase) >= 0))
-                {
-                    try
-                    {
-                        if (RenderContentType.NewContentFromTypeId(c.Id) is RenderMaterial) return c;
-                    }
-                    catch { /* not instantiable outside a document; try the next */ }
-                }
+                var pick = Core.EnscapeMatcher.Pick(MaterialTypes());
+                return pick == null ? null : new TypeInfo { Id = pick.Id, InternalName = Describe(pick) };
             }
             catch (Exception ex)
             {
                 RhinoApp.WriteLine("Material Agent: could not list render content types: " + ex.Message);
+                return null;
             }
-            return null;
         }
+
+        /// <summary>All registered material types with display and plug-in names (third parties often use GUID internal names).</summary>
+        public static List<Core.MaterialTypeInfo> MaterialTypes()
+        {
+            var result = new List<Core.MaterialTypeInfo>();
+            var plugInNames = new Dictionary<Guid, Rhino.PlugIns.PlugInInfo>();
+            foreach (var t in RenderContentType.GetAllAvailableTypes() ?? Array.Empty<RenderContentType>())
+            {
+                RenderContent instance;
+                try { instance = RenderContentType.NewContentFromTypeId(t.Id); }
+                catch { continue; }
+                if (!(instance is RenderMaterial)) continue;
+
+                if (!plugInNames.TryGetValue(t.PlugInId, out var info))
+                {
+                    try { info = Rhino.PlugIns.PlugIn.GetPlugInInfo(t.PlugInId); } catch { info = null; }
+                    plugInNames[t.PlugInId] = info;
+                }
+                string typeName;
+                try { typeName = instance.TypeName; } catch { typeName = null; }
+
+                result.Add(new Core.MaterialTypeInfo
+                {
+                    Id = t.Id,
+                    InternalName = t.InternalName,
+                    TypeName = typeName,
+                    PlugInId = t.PlugInId,
+                    PlugInName = info?.Name,
+                    PlugInFile = info?.FileName,
+                    PlugInOrganization = info?.Organization,
+                });
+            }
+            return result;
+        }
+
+        static string Describe(Core.MaterialTypeInfo t) =>
+            $"{t.TypeName ?? t.InternalName} (plug-in: {t.PlugInName ?? t.PlugInId.ToString()})";
 
         /// <summary>
         /// Replaces <paramref name="rm"/> (already in the document) with an Enscape material carrying over
@@ -109,17 +132,12 @@ namespace MaterialAgent.RhinoSide
         /// <summary>Prints all registered material types to the command line, to find Enscape's ID by hand.</summary>
         public static int ListMaterialTypes()
         {
-            int n = 0;
-            foreach (var t in RenderContentType.GetAllAvailableTypes() ?? Array.Empty<RenderContentType>())
-            {
-                bool isMaterial;
-                try { isMaterial = RenderContentType.NewContentFromTypeId(t.Id) is RenderMaterial; }
-                catch { isMaterial = false; }
-                if (!isMaterial) continue;
-                RhinoApp.WriteLine($"Material type: {t.InternalName}  {t.Id}  (plug-in {t.PlugInId})");
-                n++;
-            }
-            return n;
+            var types = MaterialTypes();
+            foreach (var t in types)
+                RhinoApp.WriteLine($"Material type: \"{t.TypeName}\"  internal {t.InternalName}  id {t.Id}  plug-in \"{t.PlugInName}\" {t.PlugInId}");
+            var pick = Core.EnscapeMatcher.Pick(types);
+            RhinoApp.WriteLine(pick == null ? "Material Agent: no Enscape material type recognised." : $"Material Agent: Enscape material type = {pick.Id} ({Describe(pick)})");
+            return types.Count;
         }
     }
 }
