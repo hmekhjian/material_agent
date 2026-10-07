@@ -36,6 +36,10 @@ namespace MaterialAgent.Core.Agent
         /// for AI seamless-texture generation when no flat texture exists.
         /// </summary>
         public List<CandidateImage> References { get; set; } = new List<CandidateImage>();
+        /// <summary>Brick/block/paver unit size from the page, when the product is one; else null.</summary>
+        public Bricks.BrickUnit Brick { get; set; }
+        /// <summary>True when the result came from this session's cache (no model calls).</summary>
+        public bool FromCache { get; set; }
         /// <summary>How long each stage took, for the status line.</summary>
         public List<KeyValuePair<string, TimeSpan>> Timings { get; set; } = new List<KeyValuePair<string, TimeSpan>>();
         public ScaleDecision Scale { get; set; }
@@ -47,6 +51,8 @@ namespace MaterialAgent.Core.Agent
         /// <summary>Pages the model's search was grounded on (title, url).</summary>
         public List<KeyValuePair<string, string>> Sources { get; set; } = new List<KeyValuePair<string, string>>();
         public GeminiUsage Usage { get; set; } = new GeminiUsage();
+        /// <summary>Gemini requests made (including repair rounds and retries), for the status line.</summary>
+        public int ModelCalls { get; set; }
         /// <summary>Non-fatal problems worth showing (e.g. candidates that failed to download).</summary>
         public List<string> Warnings { get; set; } = new List<string>();
         public DateTime ResolvedUtc { get; set; } = DateTime.UtcNow;

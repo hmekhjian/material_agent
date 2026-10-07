@@ -505,10 +505,12 @@ namespace MaterialAgent.UI
             }
 
             var tokens = r.Usage.Total;
-            var timing = string.Join(" · ", r.Timings.Select(t => $"{t.Key} {t.Value.TotalSeconds:0}s"));
+            var timing = r.FromCache
+                ? "from this session's cache, no cost"
+                : string.Join(" · ", r.Timings.Select(t => $"{t.Key} {t.Value.TotalSeconds:0}s")) + $" · {r.ModelCalls} model call(s)";
             var msg = r.Candidates.Count == 0
-                ? $"Found the product but no usable texture. ({timing}, ~{tokens:N0} tokens)"
-                : $"Found {r.Candidates.Count} texture(s). Check the picture and size, select objects, then Import. ({timing}, ~{tokens:N0} tokens)";
+                ? $"Found the product but no usable texture. ({timing}{(r.FromCache ? "" : $", ~{tokens:N0} tokens")})"
+                : $"Found {r.Candidates.Count} texture(s). Check the picture and size, select objects, then Import. ({timing}{(r.FromCache ? "" : $", ~{tokens:N0} tokens")})";
             if (r.Warnings.Count > 0) msg += "\n" + string.Join("\n", r.Warnings.Take(3));
             SetStatus(msg);
             _progressLabel.Text = r.Sources.Count > 0 ? "Sources: " + string.Join(", ", r.Sources.Take(4).Select(s => s.Key)) : "";

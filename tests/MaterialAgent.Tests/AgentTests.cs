@@ -160,105 +160,154 @@ namespace MaterialAgent.Tests
     {
         readonly string _folder = Path.Combine(Path.GetTempPath(), "matagent-tests-" + Guid.NewGuid().ToString("N"));
 
-        public ResolverTests() { ImageFetcher.DownloadFolderOverride = _folder; }
+        public ResolverTests()
+        {
+            ImageFetcher.DownloadFolderOverride = _folder;
+            GeminiMaterialResolver.ClearCache();
+        }
+
         public void Dispose()
         {
             ImageFetcher.DownloadFolderOverride = null;
             try { Directory.Delete(_folder, true); } catch { }
         }
 
-        const string Research = @"```json
-{""product"":{""name"":""Natural Halifax Oak"",""code"":""H1145 ST10"",""manufacturer"":""Egger"",""page_url"":""https://shop.example.com/h1145""},
- ""candidates"":[{""url"":""https://hallucinated.example.com/nope.jpg"",""kind"":""swatch"",""likely_tileable"":true,""note"":""guess""}],
- ""scale"":{""width_mm"":2800,""height_mm"":2070,""source"":""category_prior"",""confidence"":""low"",""rationale"":""typical decor swatch""},
- ""grain_axis"":""horizontal"",""mapping"":""planar"",""finish"":""textured"",""category"":""wood decor laminate""}
+        const string Locate = @"{""product"":{""name"":""Natural Halifax Oak"",""code"":""H1145 ST10"",""manufacturer"":""Egger"",""page_url"":""https://shop.example.com/h1145""},
+ ""other_pages"":[""https://dealer.example.com/h1145-oak""],""category"":""wood decor laminate""}";
+
+        // Images arrive in harvest order: the decor PNG (link, code in name) first, then the og:image room shot.
+        const string Analysis = @"```json
+{""product"":{""name"":""Natural Halifax Oak"",""code"":""H1145 ST10"",""manufacturer"":""Egger""},
+ ""images"":[{""index"":0,""kind"":""swatch"",""likely_tileable"":true,""matches_product"":true,""note"":""flat decor""},
+             {""index"":1,""kind"":""room"",""likely_tileable"":false,""matches_product"":true,""note"":""kitchen""}],
+ ""best_index"":0,
+ ""scale"":{""width_mm"":1000,""height_mm"":500,""source"":""image_feature"",""confidence"":""medium"",""rationale"":""planks"",
+            ""feature"":{""name"":""plank"",""real_mm"":200,""count_across"":2.5,""axis"":""height""}},
+ ""grain_axis"":""horizontal"",""mapping"":""planar"",""finish"":""textured"",""category"":""wood decor laminate"",""brick"":null}
 ```";
 
-        // Images arrive decor first (ranked by the page harvester), then the og:image room shot.
-        const string Vision = @"{""images"":[{""index"":0,""kind"":""swatch"",""likely_tileable"":true,""matches_product"":true,""note"":""flat decor""},
- {""index"":1,""kind"":""room"",""likely_tileable"":false,""matches_product"":true,""note"":""kitchen""}],
- ""best_index"":0,""grain_axis"":""horizontal"",""feature"":{""name"":""plank"",""real_mm"":200,""count_across"":2.5,""axis"":""height""}}";
-
-        static FakeHttp Web()
+        static FakeHttp Web(bool scriptRendered = false)
         {
-            var html = @"<html><head><meta property=""og:image"" content=""https://shop.example.com/img/room.jpg""></head>
-<body><a href=""https://shop.example.com/img/H1145_decor.png"">decor</a><img src=""https://shop.example.com/img/tiny-h1145.png""></body></html>";
+            var html = scriptRendered
+                ? @"<html><head><title>Loading</title></head><body><div id=""app""></div><script>render()</script></body></html>"
+                : @"<html><head><title>H1145 ST10 Natural Halifax Oak | Egger</title><meta property=""og:image"" content=""https://shop.example.com/img/room.jpg""></head>
+<body><nav>Home</nav><h1>Natural Halifax Oak H1145 ST10</h1><p>Decor image shows approx. 2800 x 2070 mm.</p><p>A warm natural oak decor with lively knots and cracks, available on chipboard and MDF in the ST10 Deepskin Rough texture.</p>
+<script>var tracking = 1;</script>
+<a href=""https://shop.example.com/img/H1145_decor.png"">decor download</a><img src=""https://shop.example.com/img/tiny-h1145.png""><nav>Home</nav></body></html>";
             return new FakeHttp()
                 .OnUrl("https://shop.example.com/h1145", System.Text.Encoding.UTF8.GetBytes(html), "text/html")
                 .OnUrl("https://shop.example.com/img/room.jpg", TestImages.Png(400, 300, 90), "image/png")
-                .OnUrl("https://shop.example.com/img/H1145_decor.png", WebpTests.Webp(800, 400, lossless: false), "image/webp") // served as WebP despite the name
+                .OnUrl("https://shop.example.com/img/H1145_decor.png", WebpTests.Webp(800, 400, lossless: false), "image/webp")
                 .OnUrl("https://shop.example.com/img/tiny-h1145.png", TestImages.Png(64, 64), "image/png");
+            // dealer.example.com is not served: a failing alternative page must not break the search.
         }
+
+        static FakeHttp Gemini(string locate, string analysis, Action<string> onAnalyse = null) =>
+            new FakeHttp().On(r => r.RequestUri.Host == "generativelanguage.googleapis.com", (r, body) =>
+            {
+                if (body.Contains("googleSearch")) return FakeHttp.Json(FakeHttp.GeminiReply(locate));
+                onAnalyse?.Invoke(body);
+                return FakeHttp.Json(FakeHttp.GeminiReply(analysis));
+            });
 
         [Fact]
         public async Task EndToEnd()
         {
-            int geminiCalls = 0;
-            var gemini = new FakeHttp().On(r => r.RequestUri.Host == "generativelanguage.googleapis.com", (r, body) =>
-            {
-                geminiCalls++;
-                return FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Research : Vision));
-            });
+            string analyseBody = null;
+            var gemini = Gemini(Locate, Analysis, b => analyseBody = b);
             var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
 
             var r = await resolver.ResolveAsync("Egger H1145 ST10", null, CancellationToken.None);
 
-            Assert.Equal(2, geminiCalls);
-            Assert.Equal("Natural Halifax Oak", r.Resolution.Product.Name);
-            // The hallucinated URL fails, the tiny thumbnail is dropped; of the page images only the
-            // texture is offered, the room shot is kept aside as a generation reference.
-            Assert.Single(r.Candidates);
-            Assert.Equal("https://shop.example.com/img/H1145_decor.png", r.Candidates[0].Url);
-            Assert.Equal("swatch", r.Candidates[0].Kind);
-            Assert.Single(r.References);
-            Assert.Equal("room", r.References[0].Kind);
-            Assert.Equal(new[] { "search", "images", "check" }, r.Timings.Select(t => t.Key).ToArray());
-            Assert.Contains(r.Warnings, w => w.Contains("hallucinated"));
-            // Vision counted 2.5 planks of 200 mm along the height of an 800x400 image.
+            // Two model calls: search-only locate, then one analysis with no tools.
+            Assert.Equal(2, r.ModelCalls);
+            Assert.Equal(2, gemini.Requests.Count);
+            Assert.Contains("googleSearch", gemini.Requests[0].body);
+            Assert.DoesNotContain("urlContext", gemini.Requests[0].body);
+            Assert.DoesNotContain("googleSearch", analyseBody);
+            Assert.DoesNotContain("urlContext", analyseBody);
+
+            // The analysis got the page text (scripts stripped, repeated nav removed) and both images inline.
+            Assert.Contains("Decor image shows approx. 2800 x 2070 mm.", analyseBody);
+            Assert.DoesNotContain("tracking", analyseBody);
+            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(analyseBody, "inlineData").Count);
+
+            // Only the texture is offered; the room shot is kept as a generation reference.
+            Assert.Equal("https://shop.example.com/img/H1145_decor.png", r.Candidates.Single().Url);
+            Assert.True(r.Candidates[0].Image.ConvertedFromWebp);
+            Assert.Equal("room", r.References.Single().Kind);
+            Assert.Contains(r.Warnings, w => w.Contains("dealer.example.com"));
+
+            // 2.5 planks of 200 mm along the height of an 800x400 image.
             Assert.Equal(ScaleSource.ImageFeature, r.Scale.Source);
             Assert.Equal(500, r.Scale.HeightMm);
             Assert.Equal(1000, r.Scale.WidthMm);
             Assert.Equal(GrainAxis.Horizontal, r.Grain);
-            Assert.Equal(MappingKind.Planar, r.Mapping);
             Assert.Equal(Finish.Textured, r.Finish);
-            Assert.True(r.Usage.Total > 0);
-            Assert.True(File.Exists(r.Candidates[0].Image.LocalPath));
-            Assert.True(r.Candidates[0].Image.ConvertedFromWebp);
-            Assert.Equal(ImageKind.Jpeg, r.Candidates[0].Image.Kind);
-            // The vision call carried both images inline.
-            var visionBody = gemini.Requests.Last().body;
-            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(visionBody, "inlineData").Count);
+            Assert.Equal("https://shop.example.com/h1145", r.Resolution.Product.PageUrl);
+            Assert.Equal(new[] { "search", "pages", "analysis" }, r.Timings.Select(t => t.Key).ToArray());
         }
 
         [Fact]
-        public async Task VisionPickReordersAndDropsWrongProduct()
+        public async Task RepeatSearchComesFromCache()
         {
-            const string pickRoom = @"{""images"":[{""index"":0,""kind"":""detail"",""likely_tileable"":false,""matches_product"":false},
- {""index"":1,""kind"":""swatch"",""likely_tileable"":true,""matches_product"":true}],""best_index"":1,""grain_axis"":""vertical"",""feature"":null}";
-            var gemini = new FakeHttp().On(r => true, (r, body) => FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Research : pickRoom)));
+            var gemini = Gemini(Locate, Analysis);
             var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
-            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
-            Assert.Equal("https://shop.example.com/img/room.jpg", r.Candidates[0].Url);
-            Assert.Single(r.Candidates);
-            Assert.False(r.References.Single().MatchesProduct);
-            Assert.Equal(GrainAxis.Vertical, r.Grain);
-            // No feature: the agent's category prior. 2800x2070 is within 3% of the 400x300 image, so it is kept.
-            Assert.Equal(ScaleSource.CategoryPrior, r.Scale.Source);
-            Assert.Equal(2070, r.Scale.HeightMm);
+            await resolver.ResolveAsync("Egger H1145 ST10", null, CancellationToken.None);
+            var again = await resolver.ResolveAsync("egger h1145-st10", null, CancellationToken.None);
+            Assert.True(again.FromCache);
+            Assert.Equal(2, gemini.Requests.Count); // no new calls
         }
 
         [Fact]
-        public async Task OnlyRoomShotsGiveNoCandidatesButKeepReferences()
+        public async Task ScriptRenderedPagesFallBackToUrlContext()
         {
-            const string allRooms = @"{""images"":[{""index"":0,""kind"":""room"",""likely_tileable"":false,""matches_product"":true},
- {""index"":1,""kind"":""room"",""likely_tileable"":false,""matches_product"":true}],""best_index"":-1,""grain_axis"":""none"",""feature"":null}";
-            var gemini = new FakeHttp().On(r => true, (r, body) => FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Research : allRooms)));
-            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
+            string analyseBody = null;
+            var gemini = Gemini(Locate, Analysis.Replace(@"""images"":[{""index"":0", @"""images"":[],""unused"":[{""index"":0"), b => analyseBody = b);
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web(scriptRendered: true)));
             var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
+            Assert.Contains("urlContext", analyseBody);
+            Assert.Contains("could not be read as plain HTML", analyseBody);
             Assert.Empty(r.Candidates);
-            Assert.Equal(2, r.References.Count);
-            Assert.Contains(r.Warnings, w => w.Contains("Only room or perspective photos"));
-            Assert.NotNull(r.Scale); // still a size to generate at
+            Assert.Contains(r.Warnings, w => w.Contains("No usable product image"));
+        }
+
+        [Fact]
+        public async Task ReturnsBrickSize()
+        {
+            var brick = Analysis.Replace(@"""brick"":null", @"""brick"":{""length_mm"":215,""height_mm"":65,""depth_mm"":102.5}");
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(Gemini(Locate, brick)), new HttpClient(Web()));
+            var r = await resolver.ResolveAsync("Ibstock Anglian Red Multi Rustic", null, CancellationToken.None);
+            Assert.Equal(215, r.Brick.LengthMm);
+            Assert.Equal(65, r.Brick.HeightMm);
+        }
+
+        [Fact]
+        public async Task RepairsInvalidAnalysisOnce()
+        {
+            int analyses = 0;
+            var gemini = new FakeHttp().On(r => true, (r, body) =>
+                body.Contains("googleSearch")
+                    ? FakeHttp.Json(FakeHttp.GeminiReply(Locate))
+                    : FakeHttp.Json(FakeHttp.GeminiReply(analyses++ == 0 ? "{\"product\":{\"name\":\"x\"},\"mapping\":\"cylinder\"}" : Analysis)));
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
+            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
+            Assert.Equal(2, analyses);
+            Assert.Contains("could not be used", gemini.Requests.Last().body);
+            Assert.Single(r.Candidates);
+        }
+
+        [Fact]
+        public async Task FallsBackWhenModelRejectsStructuredOutput()
+        {
+            var gemini = new FakeHttp().On(r => true, (r, body) =>
+            {
+                if (body.Contains("responseJsonSchema")) return FakeHttp.Json("{\"error\":{\"message\":\"responseJsonSchema is not supported with tools\"}}", HttpStatusCode.BadRequest);
+                return FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Locate : Analysis));
+            });
+            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
+            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
+            Assert.Equal("Natural Halifax Oak", r.Resolution.Product.Name);
         }
 
         [Fact]
@@ -270,47 +319,34 @@ namespace MaterialAgent.Tests
             GeminiMaterialResolver.SplitTexturesFromReferences(r, checkedByVision: false);
             Assert.Equal("b", r.Candidates.Single().Url);
             Assert.Equal("a", r.References.Single().Url);
-            Assert.Contains(r.Warnings, w => w.Contains("not checked"));
+        }
+    }
+
+    public class PageReaderTests
+    {
+        [Fact]
+        public void ExtractsReadableText()
+        {
+            var html = @"<html><head><title>Oak &amp; Co</title><meta name=""description"" content=""Lovely oak decor"">
+<script type=""application/ld+json"">{""@type"":""Product"",""size"":""2800 x 2070 mm""}</script>
+<style>.x{color:red}</style></head><body><nav>Menu</nav><div>Dimensions: 215 x 65 mm</div><script>evil()</script><nav>Menu</nav><!-- hidden --></body></html>";
+            var t = PageReader.ExtractText(html);
+            Assert.Contains("Title: Oak & Co", t);
+            Assert.Contains("Meta: Lovely oak decor", t);
+            Assert.Contains("2800 x 2070 mm", t);
+            Assert.Contains("Dimensions: 215 x 65 mm", t);
+            Assert.DoesNotContain("evil", t);
+            Assert.DoesNotContain("color:red", t);
+            Assert.DoesNotContain("hidden", t);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(t, "Menu"));
+            Assert.True(PageReader.ContentLength(t) > 20);
         }
 
         [Fact]
-        public async Task RepairsInvalidJsonOnce()
+        public void TruncatesLongPages()
         {
-            int research = 0;
-            var gemini = new FakeHttp().On(r => true, (r, body) =>
-            {
-                if (!body.Contains("googleSearch")) return FakeHttp.Json(FakeHttp.GeminiReply(Vision));
-                return FakeHttp.Json(FakeHttp.GeminiReply(research++ == 0 ? "{\"product\":{\"name\":\"\"}}" : Research));
-            });
-            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
-            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
-            Assert.Equal(2, research);
-            Assert.Contains("could not be used", gemini.Requests[1].body);
-            Assert.Equal("Natural Halifax Oak", r.Resolution.Product.Name);
-        }
-
-        [Fact]
-        public async Task FallsBackWhenModelRejectsStructuredOutput()
-        {
-            var gemini = new FakeHttp().On(r => true, (r, body) =>
-            {
-                if (body.Contains("responseJsonSchema")) return FakeHttp.Json("{\"error\":{\"message\":\"responseJsonSchema is not supported with tools\"}}", HttpStatusCode.BadRequest);
-                return FakeHttp.Json(FakeHttp.GeminiReply(body.Contains("googleSearch") ? Research : Vision));
-            });
-            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
-            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
-            Assert.Equal("Natural Halifax Oak", r.Resolution.Product.Name);
-        }
-
-        [Fact]
-        public async Task VisionFailureStillReturnsResult()
-        {
-            var gemini = new FakeHttp().On(r => true, (r, body) =>
-                body.Contains("googleSearch") ? FakeHttp.Json(FakeHttp.GeminiReply(Research)) : FakeHttp.Json(FakeHttp.GeminiReply("I can't help")));
-            var resolver = new GeminiMaterialResolver(new AgentSettings { ApiKey = "test" }, new HttpClient(gemini), new HttpClient(Web()));
-            var r = await resolver.ResolveAsync("H1145", null, CancellationToken.None);
-            Assert.Contains(r.Warnings, w => w.StartsWith("Image check skipped"));
-            Assert.Equal(ScaleSource.CategoryPrior, r.Scale.Source);
+            var html = "<body>" + string.Concat(Enumerable.Range(0, 5000).Select(i => $"<p>line number {i}</p>")) + "</body>";
+            Assert.True(PageReader.ExtractText(html, 2000).Length <= 2001);
         }
     }
 }
