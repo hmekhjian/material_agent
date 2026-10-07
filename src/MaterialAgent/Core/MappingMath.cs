@@ -17,6 +17,20 @@ namespace MaterialAgent.Core
         }
 
         /// <summary>
+        /// Resolves <see cref="MappingKind.Auto"/> for one object from its bounding-box size: planar for thin
+        /// panels (thinnest side at most 15% of the middle one, e.g. an 18 mm board), box for solids, where
+        /// planar would smear the texture down the sides.
+        /// </summary>
+        public static MappingKind ResolveAuto(MappingKind kind, double sizeX, double sizeY, double sizeZ)
+        {
+            if (kind != MappingKind.Auto) return kind;
+            var s = new[] { Math.Abs(sizeX), Math.Abs(sizeY), Math.Abs(sizeZ) };
+            Array.Sort(s);
+            if (s[1] <= 0) return MappingKind.Planar; // a flat surface
+            return s[0] <= 0.15 * s[1] ? MappingKind.Planar : MappingKind.Box;
+        }
+
+        /// <summary>
         /// Decides whether to turn the mapping 90 degrees about world Z so the texture's grain
         /// follows the object's longer horizontal side.
         /// Texture U runs along the mapping plane's X axis and V along its Y axis (top faces).

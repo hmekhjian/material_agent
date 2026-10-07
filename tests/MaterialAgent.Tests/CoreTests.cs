@@ -59,3 +59,28 @@ namespace MaterialAgent.Tests
         }
     }
 }
+
+namespace MaterialAgent.Tests
+{
+    public class AutoMappingTests
+    {
+        [Theory]
+        [InlineData(1200, 600, 18, MappingKind.Planar)]    // worktop / board
+        [InlineData(18, 2400, 600, MappingKind.Planar)]    // upright panel
+        [InlineData(1000, 1000, 0, MappingKind.Planar)]    // flat surface
+        [InlineData(1200, 800, 900, MappingKind.Box)]      // cabinet block, like the screenshot
+        [InlineData(400, 400, 400, MappingKind.Box)]
+        public void ResolvesPerObject(double x, double y, double z, MappingKind expected)
+        {
+            Assert.Equal(expected, MappingMath.ResolveAuto(MappingKind.Auto, x, y, z));
+        }
+
+        [Fact]
+        public void ExplicitChoiceWins()
+        {
+            Assert.Equal(MappingKind.Planar, MappingMath.ResolveAuto(MappingKind.Planar, 1200, 800, 900));
+            Assert.True(EnumText.TryParseMapping("auto", out var m) && m == MappingKind.Auto);
+            Assert.Equal("auto", EnumText.ToWire(MappingKind.Auto));
+        }
+    }
+}

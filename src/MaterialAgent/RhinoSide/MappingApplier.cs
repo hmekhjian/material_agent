@@ -39,10 +39,11 @@ namespace MaterialAgent.RhinoSide
             var bb = obj.Geometry?.GetBoundingBox(true) ?? BoundingBox.Unset;
             if (!bb.IsValid) return null;
             var size = bb.Diagonal;
+            var kind = MappingMath.ResolveAuto(s.Kind, size.X, size.Y, size.Z);
 
             Plane plane;
             double extentU, extentV;
-            if (s.Kind == MappingKind.Planar)
+            if (kind == MappingKind.Planar)
             {
                 // Project along the object's thinnest world axis (a panel lying flat, or standing up).
                 if (size.Z <= size.X && size.Z <= size.Y)
@@ -73,7 +74,7 @@ namespace MaterialAgent.RhinoSide
             var dx = new Interval(0, w);
             var dy = new Interval(0, h);
 
-            switch (s.Kind)
+            switch (kind)
             {
                 case MappingKind.Planar:
                     return TextureMapping.CreatePlaneMapping(plane, dx, dy, new Interval(-1, 1), true);

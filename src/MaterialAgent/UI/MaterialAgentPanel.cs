@@ -139,10 +139,12 @@ namespace MaterialAgent.UI
             _docSerial = documentSerialNumber;
             _candidateScroll = new Scrollable { Content = _candidateStrip, Height = ThumbSize + 14, Border = BorderType.None, ExpandContentHeight = false, Visible = false };
 
+            _mappingDrop.Items.Add("Auto (per object)", nameof(MappingKind.Auto));
             _mappingDrop.Items.Add("Box", nameof(MappingKind.Box));
             _mappingDrop.Items.Add("Planar", nameof(MappingKind.Planar));
             _mappingDrop.Items.Add("Per-face (box for now)", nameof(MappingKind.PerFace));
-            _mappingDrop.SelectedKey = nameof(MappingKind.Box);
+            _mappingDrop.SelectedKey = nameof(MappingKind.Auto);
+            _mappingDrop.ToolTip = "Auto: planar for thin panels, box for solids, decided per object.";
 
             _grainDrop.Items.Add("No grain", nameof(GrainAxis.None));
             _grainDrop.Items.Add("Horizontal in image", nameof(GrainAxis.Horizontal));
@@ -483,7 +485,9 @@ namespace MaterialAgent.UI
             _pageUrlBox.Text = p.PageUrl ?? "";
             ShowProductHeader(p.Name, p.Manufacturer, p.Code, r.Category);
 
-            _mappingDrop.SelectedKey = r.Mapping.ToString();
+            // The agent can't see the geometry, so default to per-object Auto and mention its suggestion.
+            _mappingDrop.SelectedKey = nameof(MappingKind.Auto);
+            _mappingDrop.ToolTip = $"Auto: planar for thin panels, box for solids, decided per object. The agent suggested {r.Mapping}.";
             _grainDrop.SelectedKey = r.Grain.ToString();
             _rotateCheck.Checked = false;
             _finishDrop.SelectedKey = r.Finish.ToString();
@@ -984,8 +988,10 @@ namespace MaterialAgent.UI
 
         void RefreshExisting()
         {
-            var imageKey = _image?.Source;
-            _existing = MaterialReuse.Find(Doc, _codeBox.Text?.Trim(), imageKey);
+            // With an image selected, only a material made from that same image counts as "already in the
+            // document"; matching by product code would silently ignore a different image (e.g. a generated one).
+            var code = _image == null ? _codeBox.Text?.Trim() : null;
+            _existing = MaterialReuse.Find(Doc, code, _image?.Source);
             _reuseCheck.Visible = _existing != null;
             if (_existing != null) _reuseCheck.Text = $"Reuse '{_existing.Material.Name}' already in this document";
             UpdateButtons();

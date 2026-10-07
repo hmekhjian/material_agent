@@ -3,6 +3,8 @@ namespace MaterialAgent.Core
     /// <summary>How the texture is projected onto the object.</summary>
     public enum MappingKind
     {
+        /// <summary>Chosen per object from its shape: planar for thin panels, box for solids.</summary>
+        Auto,
         Box,
         Planar,
         /// <summary>Per-face projection. Not implemented separately yet: applied as capped box mapping.</summary>
@@ -75,6 +77,7 @@ namespace MaterialAgent.Core
 
         public static string ToWire(MappingKind m) => m switch
         {
+            MappingKind.Auto => "auto",
             MappingKind.Planar => "planar",
             MappingKind.PerFace => "per_face",
             _ => "box",
@@ -106,6 +109,7 @@ namespace MaterialAgent.Core
         {
             switch ((s ?? "").Trim().ToLowerInvariant())
             {
+                case "auto": value = MappingKind.Auto; return true;
                 case "box": value = MappingKind.Box; return true;
                 case "planar": value = MappingKind.Planar; return true;
                 case "per_face": value = MappingKind.PerFace; return true;
