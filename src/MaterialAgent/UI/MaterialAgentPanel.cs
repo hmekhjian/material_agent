@@ -200,8 +200,8 @@ namespace MaterialAgent.UI
             _liveTimer.Elapsed += (s, e) => { _liveTimer.Stop(); Remap(quiet: true); };
             MaterialAgentEvents.ScaleChanged += OnExternalScaleChanged;
 
-            _materialPage.Content = new Scrollable { Border = BorderType.None, Content = BuildLayout() };
-            _settingsPage.Content = new Scrollable { Border = BorderType.None, Content = BuildSettingsPage() };
+            _materialPage.Content = VerticalScroller(BuildLayout());
+            _settingsPage.Content = VerticalScroller(BuildSettingsPage());
             _tabs.Pages.Add(_materialPage);
             _tabs.Pages.Add(_settingsPage);
             Content = _tabs;
@@ -308,6 +308,24 @@ namespace MaterialAgent.UI
 
             layout.Add(null);
             return layout;
+        }
+
+        /// <summary>Room left for the vertical scrollbar, which appears without resizing the scroll area.</summary>
+        const int ScrollbarAllowance = 20;
+
+        /// <summary>
+        /// A vertically scrolling container whose content is pinned to the visible width. Without this, long
+        /// wrapped labels report their unwrapped width, the content grows sideways and buttons end up off-screen.
+        /// </summary>
+        static Scrollable VerticalScroller(Control content)
+        {
+            var scroll = new Scrollable { Border = BorderType.None, ExpandContentWidth = true, Content = content };
+            scroll.SizeChanged += (s, e) =>
+            {
+                int w = scroll.ClientSize.Width - ScrollbarAllowance;
+                if (w > 100 && content.Width != w) content.Width = w;
+            };
+            return scroll;
         }
 
         static TableLayout Row(params TableCell[] cells)
