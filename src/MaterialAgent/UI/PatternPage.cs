@@ -57,18 +57,20 @@ namespace MaterialAgent.UI
         string _srcUrl = "";
         string _productName = "";
         List<PaletteColor> _palette = new List<PaletteColor>();
+        BrickFaceSet _faces;
         readonly HashSet<int> _paletteOff = new HashSet<int>();
         int _seed = 1, _renderVersion;
 
-        static readonly (string name, byte r, byte g, byte b)[] Joints =
+        readonly (string name, byte r, byte g, byte b)[] Joints =
         {
-            ("Natural grey", 190, 184, 172), ("Light grey", 205, 205, 200), ("White", 235, 233, 226),
+            ("From the photo", 190, 184, 172), ("Natural grey", 190, 184, 172), ("Light grey", 205, 205, 200), ("White", 235, 233, 226),
             ("Buff", 205, 180, 135), ("Dark grey", 95, 95, 92), ("Charcoal", 55, 55, 55), ("Black", 25, 25, 25),
         };
 
         public PatternPage(MaterialAgentPanel host)
         {
             _host = host;
+            _fill.Items.Add("Real bricks from the photo (brickwork)", nameof(FillMode.Faces));
             _fill.Items.Add("Product texture (planks, tiles, stone)", nameof(FillMode.Texture));
             _fill.Items.Add("Colours from the photo (bricks)", nameof(FillMode.Palette));
             _fill.SelectedKey = nameof(FillMode.Palette);
@@ -179,6 +181,7 @@ namespace MaterialAgent.UI
         {
             _depth.Enabled = UsesDepth;
             _paletteStrip.Visible = _fill.SelectedKey == nameof(FillMode.Palette) && _palette.Count > 0;
+            _grainVertical.Enabled = _fill.SelectedKey == nameof(FillMode.Texture);
         }
 
         /// <summary>Called when the Material tab gets a new search result: offer brick sizes and the texture.</summary>
@@ -231,6 +234,29 @@ namespace MaterialAgent.UI
             _srcLabel.Text = $"{_productName}" + (widthMm > 0 ? $" · image covers {widthMm:0} mm" : " · size unknown");
             _srcWidth.Value = Math.Round(widthMm);
             try { _palette = Palette.Extract(bytes); } catch { _palette = new List<PaletteColor>(); }
+
+            // A photo of brickwork: cut out the individual bricks, so units never contain mortar.
+            try { _faces = BrickFaceExtractor.Extract(bytes); } catch { _faces = null; }
+            if (_faces?.IsBrickwork == true)
+            {
+                var mortar = Color.FromArgb(_faces.MortarR, _faces.MortarG, _faces.MortarB);
+                Joints[0] = ("From the photo", _faces.MortarR, _faces.MortarG, _faces.MortarB);
+                _jointPreset.SelectedIndex = 0;
+                _jointColor.Value = mortar;
+                // The mortar is not a brick colour.
+                _palette = _palette.Where(p => Math.Abs(p.R - _faces.MortarR) + Math.Abs(p.G - _faces.MortarG) + Math.Abs(p.B - _faces.MortarB) > 60).ToList();
+                if (widthMm <= 0)
+                {
+                    var measured = BrickFaceExtractor.PhotoWidthMm(_faces, _length.Value, _joint.Value);
+                    if (measured > 0) _srcWidth.Value = Math.Round(measured);
+                }
+                _fill.SelectedKey = nameof(FillMode.Faces);
+                _srcLabel.Text += $" · {_faces.Faces.Count} bricks found in the photo";
+            }
+            else if (_fill.SelectedKey == nameof(FillMode.Faces))
+            {
+                _fill.SelectedKey = nameof(FillMode.Palette);
+            }
             _paletteOff.Clear();
             _paletteStrip.Invalidate();
             UpdateEnabled();
@@ -284,6 +310,7 @@ namespace MaterialAgent.UI
                 ImageBytes = _srcBytes,
                 ImageWidthMm = _srcWidth.Value,
                 Palette = _palette.Where((p, i) => !_paletteOff.Contains(i)).ToList(),
+                Faces = _faces?.Faces ?? new List<BrickFace>(),
             };
             return (layout, style, source);
         }

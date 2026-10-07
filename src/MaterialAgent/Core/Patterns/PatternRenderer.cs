@@ -15,6 +15,8 @@ namespace MaterialAgent.Core.Patterns
         Texture,
         /// <summary>Each unit gets a colour from the product photo's palette plus its surface detail (bricks).</summary>
         Palette,
+        /// <summary>Each unit is a real brick face cut out of a brickwork photo (no mortar inside bricks).</summary>
+        Faces,
     }
 
     public sealed class PatternStyle
@@ -46,6 +48,8 @@ namespace MaterialAgent.Core.Patterns
         public double ImageWidthMm { get; set; }
         /// <summary>Colours for palette mode; extracted from the image when empty.</summary>
         public List<PaletteColor> Palette { get; set; } = new List<PaletteColor>();
+        /// <summary>Brick faces for faces mode (from <see cref="BrickFaceExtractor"/>).</summary>
+        public List<BrickFace> Faces { get; set; } = new List<BrickFace>();
     }
 
     public sealed class PatternResult
@@ -102,6 +106,8 @@ namespace MaterialAgent.Core.Patterns
                 srcDetail = HighPass(src, sw, sh);
             }
             if (style.Fill == FillMode.Texture && src == null) throw new InvalidOperationException("Texture fill needs a product image.");
+            if (style.Fill == FillMode.Faces && (source.Faces == null || source.Faces.Count == 0))
+                throw new InvalidOperationException("No bricks were found in the photo; use the colour fill instead.");
 
             var palette = source.Palette?.Count > 0 ? source.Palette
                 : source.ImageBytes != null ? Palette.Extract(source.ImageBytes) : new List<PaletteColor>();
@@ -146,6 +152,19 @@ namespace MaterialAgent.Core.Patterns
                 double tint = (rng.NextDouble() - 0.5) * style.Variation * 0.12;
                 double faceRough = Math.Max(0.05, Math.Min(1, style.Roughness + (rng.NextDouble() - 0.5) * 0.1));
 
+                // Faces mode: a random real brick face, cropped to this unit's proportions (not squashed), maybe flipped.
+                BrickFace face = null; double fx0 = 0, fy0 = 0, fcw = 1, fch = 1; bool flipX = false, flipY = false;
+                if (style.Fill == FillMode.Faces)
+                {
+                    face = source.Faces[rng.Next(source.Faces.Count)];
+                    double unitAspect = lenAlong / lenAcross, faceAspect = (double)face.Width / face.Height;
+                    if (faceAspect > unitAspect) { fch = face.Height; fcw = face.Height * unitAspect; fx0 = rng.NextDouble() * (face.Width - fcw); }
+                    else { fcw = face.Width; fch = face.Width / unitAspect; fy0 = rng.NextDouble() * (face.Height - fch); }
+                    flipX = rng.Next(2) == 0;
+                    flipY = rng.Next(2) == 0;
+                    bright = 1 + (bright - 1) * 0.4; // real faces already vary; keep extra variation gentle
+                }
+
                 int x0 = (int)Math.Round((ox + u.X) * sx), x1 = (int)Math.Round((ox + u.X + u.W) * sx);
                 int y0 = (int)Math.Round((oy + u.Y) * sy), y1 = (int)Math.Round((oy + u.Y + u.H) * sy);
                 for (int py = y0; py < y1; py++)
@@ -163,7 +182,15 @@ namespace MaterialAgent.Core.Patterns
                         double bevel = Smooth(edge / bevelMm);
 
                         double r, g, b;
-                        if (style.Fill == FillMode.Texture)
+                        if (face != null)
+                        {
+                            double tu = along / lenAlong, tv = across / lenAcross;
+                            if (flipX) tu = 1 - tu;
+                            if (flipY) tv = 1 - tv;
+                            // Bilinear: photo bricks are usually enlarged, nearest-pixel would look blocky.
+                            (r, g, b) = Bilinear(face, fx0 + tu * fcw - 0.5, fy0 + (1 - tv) * fch - 0.5);
+                        }
+                        else if (style.Fill == FillMode.Texture)
                         {
                             var s = Sample(src, sw, sh, (offU + along) / srcMm, (offV + across) / srcMm);
                             r = s.R; g = s.G; b = s.B;
@@ -205,6 +232,20 @@ namespace MaterialAgent.Core.Patterns
             double total = palette.Sum(p => p.Weight), t = rng.NextDouble() * total;
             foreach (var p in palette) { if ((t -= p.Weight) <= 0) return p; }
             return palette[palette.Count - 1];
+        }
+
+        static (double, double, double) Bilinear(BrickFace f, double x, double y)
+        {
+            x = Math.Max(0, Math.Min(f.Width - 1.001, x));
+            y = Math.Max(0, Math.Min(f.Height - 1.001, y));
+            int x0 = (int)x, y0 = (int)y;
+            double tx = x - x0, ty = y - y0;
+            var a = f.Pixels[y0 * f.Width + x0];
+            var b = f.Pixels[y0 * f.Width + x0 + 1];
+            var c = f.Pixels[(y0 + 1) * f.Width + x0];
+            var d = f.Pixels[(y0 + 1) * f.Width + x0 + 1];
+            double L(byte p, byte q, byte r, byte s) => (p * (1 - tx) + q * tx) * (1 - ty) + (r * (1 - tx) + s * tx) * ty;
+            return (L(a.R, b.R, c.R, d.R), L(a.G, b.G, c.G, d.G), L(a.B, b.B, c.B, d.B));
         }
 
         // Mirrored addressing: if a crop is larger than the source it reflects instead of wrapping (no hard seam).
